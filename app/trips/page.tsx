@@ -41,7 +41,7 @@ const MOCK_FRIENDS: User[] = [
   { id: 'friend5', name: 'Priya Patel', email: 'priya@email.com', avatarUrl: '' },
 ]
 
-const MOCK_GROUPS: Group[] = [
+const INITIAL_GROUPS: Group[] = [
   { id: 'group1', name: 'Bali Trip 2026', memberIds: [ME_ID, 'friend1', 'friend2', 'friend3'], emoji: '🏝️' },
   { id: 'group2', name: 'Roommates', memberIds: [ME_ID, 'friend4', 'friend5'], emoji: '🏠' },
   { id: 'group3', name: 'Office Lunches', memberIds: [ME_ID, 'friend1', 'friend4'], emoji: '🍕' },
@@ -167,8 +167,33 @@ export default function TripsPage() {
   // DEV MODE: Skip auth, use mock user
   const user = { email: 'dev@budgieee.app' }
   const [expenses, setExpenses] = useState<Expense[]>(INITIAL_EXPENSES)
+  const [groups, setGroups] = useState<Group[]>(INITIAL_GROUPS)
   const [activeTab, setActiveTab] = useState<'friends' | 'groups' | 'activity'>('friends')
   const [showAddModal, setShowAddModal] = useState(false)
+  const [expandedGroup, setExpandedGroup] = useState<string | null>(null)
+  const [showInviteModal, setShowInviteModal] = useState<string | null>(null)
+
+  // Add member to group
+  const handleAddMemberToGroup = (groupId: string, friendId: string) => {
+    setGroups(prev => prev.map(g => {
+      if (g.id === groupId && !g.memberIds.includes(friendId)) {
+        return { ...g, memberIds: [...g.memberIds, friendId] }
+      }
+      return g
+    }))
+    setShowInviteModal(null)
+  }
+
+  // Remove member from group
+  const handleRemoveMemberFromGroup = (groupId: string, memberId: string) => {
+    if (memberId === ME_ID) return // Can't remove yourself
+    setGroups(prev => prev.map(g => {
+      if (g.id === groupId) {
+        return { ...g, memberIds: g.memberIds.filter(id => id !== memberId) }
+      }
+      return g
+    }))
+  }
 
   // Calculate balances
   const balances = useMemo(() => {
@@ -222,7 +247,7 @@ export default function TripsPage() {
   const groupBalances = useMemo(() => {
     const gBalances: Record<string, number> = {}
     
-    MOCK_GROUPS.forEach(g => {
+    groups.forEach(g => {
       gBalances[g.id] = 0
     })
 
@@ -243,7 +268,7 @@ export default function TripsPage() {
     })
 
     return gBalances
-  }, [expenses])
+  }, [expenses, groups])
 
   // Sorted friends by absolute balance
   const sortedFriends = useMemo(() => {
@@ -396,35 +421,143 @@ export default function TripsPage() {
         {/* Groups Tab */}
         {activeTab === 'groups' && (
           <div className="trips-groups-list">
-            {MOCK_GROUPS.map(group => {
+            {groups.map(group => {
               const balance = groupBalances[group.id] || 0
               const hasBalance = Math.abs(balance) > 0.01
               const memberCount = group.memberIds.length
+              const isExpanded = expandedGroup === group.id
+              const members = group.memberIds.map(id => 
+                id === ME_ID ? { id, name: 'You' } : MOCK_FRIENDS.find(f => f.id === id)
+              ).filter(Boolean)
+              const availableFriends = MOCK_FRIENDS.filter(f => !group.memberIds.includes(f.id))
               
               return (
-                <div key={group.id} className="trips-group-item">
-                  <div className="trips-group-icon">
-                    {group.emoji}
+                <div key={group.id} className="trips-group-wrapper">
+                  <div 
+                    className={`trips-group-item ${isExpanded ? 'expanded' : ''}`}
+                    onClick={() => setExpandedGroup(isExpanded ? null : group.id)}
+                  >
+                    <div className="trips-group-icon">
+                      {group.emoji}
+                    </div>
+                    <div className="trips-group-info">
+                      <span className="trips-group-name">{group.name}</span>
+                      <span className="trips-group-members">{memberCount} members • tap to {isExpanded ? 'collapse' : 'view'}</span>
+                    </div>
+                    <div className="trips-group-balance">
+                      {hasBalance && (
+                        <>
+                          <span className={balance > 0 ? 'trips-positive' : 'trips-negative'}>
+                            {balance > 0 ? '+' : '-'}{formatCurrency(balance)}
+                          </span>
+                          <span className={`trips-group-status ${balance > 0 ? 'trips-positive' : 'trips-negative'}`}>
+                            {balance > 0 ? 'you are owed' : 'you owe'}
+                          </span>
+                        </>
+                      )}
+                      {!hasBalance && (
+                        <span className="trips-settled">settled up</span>
+                      )}
+                    </div>
+                    <div className={`trips-group-chevron ${isExpanded ? 'expanded' : ''}`}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M6 9l6 6 6-6"/>
+                      </svg>
+                    </div>
                   </div>
-                  <div className="trips-group-info">
-                    <span className="trips-group-name">{group.name}</span>
-                    <span className="trips-group-members">{memberCount} members</span>
-                  </div>
-                  <div className="trips-group-balance">
-                    {hasBalance && (
-                      <>
-                        <span className={balance > 0 ? 'trips-positive' : 'trips-negative'}>
-                          {balance > 0 ? '+' : '-'}{formatCurrency(balance)}
-                        </span>
-                        <span className={`trips-group-status ${balance > 0 ? 'trips-positive' : 'trips-negative'}`}>
-                          {balance > 0 ? 'you are owed' : 'you owe'}
-                        </span>
-                      </>
-                    )}
-                    {!hasBalance && (
-                      <span className="trips-settled">settled up</span>
-                    )}
-                  </div>
+                  {isExpanded && (
+                    <div className="trips-group-members-list">
+                      <div className="trips-group-members-header">Members</div>
+                      {members.map(member => member && (
+                        <div key={member.id} className="trips-group-member">
+                          <div 
+                            className="trips-group-member-avatar" 
+                            style={{ background: getAvatarColor(member.id) }}
+                          >
+                            {member.id === ME_ID ? 'Y' : getInitials(member.name)}
+                          </div>
+                          <span className="trips-group-member-name">{member.name}</span>
+                          {member.id === ME_ID && <span className="trips-group-member-you">(You)</span>}
+                          {member.id !== ME_ID && (
+                            <button 
+                              className="trips-group-member-remove"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleRemoveMemberFromGroup(group.id, member.id)
+                              }}
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <line x1="18" y1="6" x2="6" y2="18"/>
+                                <line x1="6" y1="6" x2="18" y2="18"/>
+                              </svg>
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                      <button 
+                        className="trips-invite-btn"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setShowInviteModal(group.id)
+                        }}
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                          <circle cx="8.5" cy="7" r="4"/>
+                          <line x1="20" y1="8" x2="20" y2="14"/>
+                          <line x1="23" y1="11" x2="17" y2="11"/>
+                        </svg>
+                        Invite Member
+                      </button>
+                      
+                      {/* Invite Modal */}
+                      {showInviteModal === group.id && (
+                        <div className="trips-invite-dropdown">
+                          <div className="trips-invite-dropdown-header">
+                            <span>Add to {group.name}</span>
+                            <button 
+                              className="trips-invite-dropdown-close"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setShowInviteModal(null)
+                              }}
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <line x1="18" y1="6" x2="6" y2="18"/>
+                                <line x1="6" y1="6" x2="18" y2="18"/>
+                              </svg>
+                            </button>
+                          </div>
+                          {availableFriends.length === 0 ? (
+                            <div className="trips-invite-empty">All friends are already members</div>
+                          ) : (
+                            availableFriends.map(friend => (
+                              <button
+                                key={friend.id}
+                                className="trips-invite-option"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  handleAddMemberToGroup(group.id, friend.id)
+                                }}
+                              >
+                                <div 
+                                  className="trips-invite-option-avatar"
+                                  style={{ background: getAvatarColor(friend.id) }}
+                                >
+                                  {getInitials(friend.name)}
+                                </div>
+                                <span>{friend.name}</span>
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <line x1="12" y1="5" x2="12" y2="19"/>
+                                  <line x1="5" y1="12" x2="19" y2="12"/>
+                                </svg>
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )
             })}
@@ -444,7 +577,7 @@ export default function TripsPage() {
               
               return (
                 <div key={expense.id} className="trips-activity-item">
-                  <div className="trips-activity-icon" style={{ background: isPayer ? '#10b981' : '#374151' }}>
+                  <div className="trips-activity-icon" style={{ background: isPayer ? '#3b82f6' : '#374151' }}>
                     {isPayer ? '💰' : '📝'}
                   </div>
                   <div className="trips-activity-info">
@@ -491,7 +624,7 @@ export default function TripsPage() {
       {showAddModal && (
         <AddExpenseModal
           friends={MOCK_FRIENDS}
-          groups={MOCK_GROUPS}
+          groups={groups}
           onClose={() => setShowAddModal(false)}
           onSubmit={handleAddExpense}
         />
@@ -675,7 +808,15 @@ function AddExpenseModal({ friends, groups, onClose, onSubmit }: AddExpenseModal
 const styles = `
   .trips-page {
     min-height: 100vh;
-    background: linear-gradient(180deg, #07161c 0%, #0b2530 50%, #0a1f28 100%);
+    background: linear-gradient(180deg, 
+      #050d18 0%, 
+      #0a1628 15%, 
+      #142136 35%, 
+      #1a2d4a 50%, 
+      #142136 65%, 
+      #0a1628 85%, 
+      #050d18 100%
+    );
     color: #e2e8f0;
     padding-bottom: 100px;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -691,8 +832,8 @@ const styles = `
   .trips-spinner {
     width: 40px;
     height: 40px;
-    border: 3px solid rgba(52, 211, 153, 0.2);
-    border-top-color: #34d399;
+    border: 3px solid rgba(59, 130, 246, 0.2);
+    border-top-color: #3b82f6;
     border-radius: 50%;
     animation: trips-spin 0.8s linear infinite;
   }
@@ -728,7 +869,7 @@ const styles = `
     display: inline-flex;
     align-items: center;
     padding: 12px 24px;
-    background: linear-gradient(135deg, #10b981, #059669);
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
     color: white;
     border-radius: 12px;
     text-decoration: none;
@@ -737,7 +878,7 @@ const styles = `
   }
   .trips-auth-button:hover {
     transform: translateY(-2px);
-    box-shadow: 0 8px 24px rgba(16, 185, 129, 0.3);
+    box-shadow: 0 8px 24px rgba(59, 130, 246, 0.3);
   }
 
   /* Header */
@@ -809,8 +950,8 @@ const styles = `
     gap: 4px;
   }
   .trips-summary-owed {
-    border-color: rgba(52, 211, 153, 0.2);
-    background: rgba(52, 211, 153, 0.05);
+    border-color: rgba(59, 130, 246, 0.3);
+    background: rgba(59, 130, 246, 0.08);
   }
   .trips-summary-owe {
     border-color: rgba(248, 113, 113, 0.2);
@@ -837,7 +978,7 @@ const styles = `
 
   /* Colors */
   .trips-positive {
-    color: #34d399;
+    color: #60a5fa;
   }
   .trips-negative {
     color: #f87171;
@@ -873,8 +1014,8 @@ const styles = `
     color: #94a3b8;
   }
   .trips-tab.active {
-    color: #34d399;
-    border-bottom-color: #34d399;
+    color: #60a5fa;
+    border-bottom-color: #3b82f6;
   }
   .trips-tab svg {
     opacity: 0.7;
@@ -949,6 +1090,10 @@ const styles = `
     flex-direction: column;
     gap: 8px;
   }
+  .trips-group-wrapper {
+    display: flex;
+    flex-direction: column;
+  }
   .trips-group-item {
     display: flex;
     align-items: center;
@@ -958,10 +1103,17 @@ const styles = `
     border: 1px solid rgba(255,255,255,0.08);
     border-radius: 14px;
     transition: background 0.2s, border-color 0.2s;
+    cursor: pointer;
   }
   .trips-group-item:hover {
     background: rgba(255,255,255,0.06);
     border-color: rgba(255,255,255,0.12);
+  }
+  .trips-group-item.expanded {
+    border-radius: 14px 14px 0 0;
+    border-bottom-color: transparent;
+    background: rgba(59, 130, 246, 0.08);
+    border-color: rgba(59, 130, 246, 0.2);
   }
   .trips-group-icon {
     width: 42px;
@@ -1001,6 +1153,179 @@ const styles = `
   }
   .trips-group-status {
     font-size: 0.7rem;
+  }
+  .trips-group-chevron {
+    color: #64748b;
+    transition: transform 0.2s;
+    flex-shrink: 0;
+  }
+  .trips-group-chevron.expanded {
+    transform: rotate(180deg);
+  }
+  .trips-group-members-list {
+    background: rgba(59, 130, 246, 0.05);
+    border: 1px solid rgba(59, 130, 246, 0.2);
+    border-top: none;
+    border-radius: 0 0 14px 14px;
+    padding: 12px 16px;
+  }
+  .trips-group-members-header {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 10px;
+  }
+  .trips-group-member {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 0;
+  }
+  .trips-group-member:not(:last-child) {
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+  }
+  .trips-group-member-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: 0.75rem;
+    color: white;
+    flex-shrink: 0;
+  }
+  .trips-group-member-name {
+    font-size: 0.875rem;
+    color: #e2e8f0;
+  }
+  .trips-group-member-you {
+    font-size: 0.75rem;
+    color: #60a5fa;
+    margin-left: 4px;
+  }
+  .trips-group-member-name {
+    flex: 1;
+  }
+  .trips-group-member-remove {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    background: rgba(248, 113, 113, 0.1);
+    border: none;
+    border-radius: 6px;
+    color: #f87171;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.2s, background 0.2s;
+  }
+  .trips-group-member:hover .trips-group-member-remove {
+    opacity: 1;
+  }
+  .trips-group-member-remove:hover {
+    background: rgba(248, 113, 113, 0.2);
+  }
+  .trips-invite-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    padding: 12px;
+    margin-top: 12px;
+    background: rgba(59, 130, 246, 0.1);
+    border: 1px dashed rgba(59, 130, 246, 0.3);
+    border-radius: 10px;
+    color: #60a5fa;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s;
+  }
+  .trips-invite-btn:hover {
+    background: rgba(59, 130, 246, 0.15);
+    border-color: rgba(59, 130, 246, 0.5);
+  }
+  .trips-invite-dropdown {
+    margin-top: 12px;
+    background: rgba(10, 22, 40, 0.95);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .trips-invite-dropdown-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    background: rgba(59, 130, 246, 0.1);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: #60a5fa;
+  }
+  .trips-invite-dropdown-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    background: transparent;
+    border: none;
+    color: #64748b;
+    cursor: pointer;
+    border-radius: 6px;
+    transition: background 0.2s, color 0.2s;
+  }
+  .trips-invite-dropdown-close:hover {
+    background: rgba(255,255,255,0.1);
+    color: #e2e8f0;
+  }
+  .trips-invite-empty {
+    padding: 16px;
+    text-align: center;
+    color: #64748b;
+    font-size: 0.8125rem;
+  }
+  .trips-invite-option {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 12px 16px;
+    background: transparent;
+    border: none;
+    border-top: 1px solid rgba(255,255,255,0.05);
+    color: #e2e8f0;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: background 0.2s;
+    text-align: left;
+  }
+  .trips-invite-option:hover {
+    background: rgba(59, 130, 246, 0.1);
+  }
+  .trips-invite-option-avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: 0.7rem;
+    color: white;
+    flex-shrink: 0;
+  }
+  .trips-invite-option span {
+    flex: 1;
+  }
+  .trips-invite-option svg {
+    color: #60a5fa;
   }
 
   /* Activity List */
@@ -1048,7 +1373,7 @@ const styles = `
   }
   .trips-activity-amount-inline {
     font-weight: 600;
-    color: #34d399;
+    color: #60a5fa;
   }
   .trips-activity-desc {
     color: #e2e8f0;
@@ -1078,19 +1403,19 @@ const styles = `
     width: 56px;
     height: 56px;
     border-radius: 50%;
-    background: linear-gradient(135deg, #10b981, #059669);
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
     border: none;
     color: white;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    box-shadow: 0 4px 16px rgba(16, 185, 129, 0.4);
+    box-shadow: 0 4px 16px rgba(59, 130, 246, 0.4);
     transition: transform 0.2s, box-shadow 0.2s;
   }
   .trips-add-btn:hover {
     transform: scale(1.08);
-    box-shadow: 0 6px 24px rgba(16, 185, 129, 0.5);
+    box-shadow: 0 6px 24px rgba(59, 130, 246, 0.5);
   }
   .trips-add-btn:active {
     transform: scale(0.96);
@@ -1115,7 +1440,7 @@ const styles = `
     width: 100%;
     max-width: 480px;
     max-height: 90vh;
-    background: linear-gradient(180deg, #0f2930 0%, #0a1f28 100%);
+    background: linear-gradient(180deg, #131f33 0%, #0d1a2d 100%);
     border: 1px solid rgba(255,255,255,0.1);
     border-radius: 24px 24px 0 0;
     overflow: hidden;
@@ -1196,7 +1521,7 @@ const styles = `
     transition: border-color 0.2s, background 0.2s;
   }
   .trips-input:focus {
-    border-color: #10b981;
+    border-color: #3b82f6;
     background: rgba(255,255,255,0.06);
   }
   .trips-input::placeholder {
@@ -1234,10 +1559,10 @@ const styles = `
     padding-right: 40px;
   }
   .trips-select:focus {
-    border-color: #10b981;
+    border-color: #3b82f6;
   }
   .trips-select option {
-    background: #0a1f28;
+    background: #0d1a2d;
     color: #e2e8f0;
   }
   .trips-split-list {
@@ -1278,8 +1603,8 @@ const styles = `
     flex-shrink: 0;
   }
   .trips-split-item input:checked + .trips-split-checkbox {
-    background: #10b981;
-    border-color: #10b981;
+    background: #3b82f6;
+    border-color: #3b82f6;
   }
   .trips-split-item input:checked + .trips-split-checkbox::after {
     content: '';
@@ -1297,15 +1622,15 @@ const styles = `
   }
   .trips-split-preview {
     font-size: 0.8125rem;
-    color: #10b981;
-    background: rgba(16, 185, 129, 0.1);
+    color: #60a5fa;
+    background: rgba(59, 130, 246, 0.1);
     padding: 8px 12px;
     border-radius: 8px;
     text-align: center;
   }
   .trips-submit-btn {
     padding: 14px 24px;
-    background: linear-gradient(135deg, #10b981, #059669);
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
     border: none;
     border-radius: 12px;
     color: white;
@@ -1316,7 +1641,7 @@ const styles = `
   }
   .trips-submit-btn:hover {
     transform: translateY(-2px);
-    box-shadow: 0 8px 24px rgba(16, 185, 129, 0.3);
+    box-shadow: 0 8px 24px rgba(59, 130, 246, 0.3);
   }
   .trips-submit-btn:active {
     transform: translateY(0);
