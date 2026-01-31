@@ -1,40 +1,45 @@
 'use client'
 
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import Link from 'next/link'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts'
+import { supabase, isSupabaseConfigured } from '@/lib/supabaseClient'
+import {
+  ensureBudgetSeed,
+  getBudget,
+  getCategoriesWithSpent,
+  getCategoryExpenses,
+  addExpense,
+  deleteExpense,
+  updateCategoryBudget,
+  updateTotalBudget,
+  getCurrentMonth,
+  createCategory,
+  deleteCategory,
+  updateCategory,
+  type BudgetCategory,
+  type BudgetExpense,
+} from '@/lib/budgetRepo'
+import type { User } from '@supabase/supabase-js'
 
 // ============================================
-// MVP – State only. Supabase / Plaid later.
+// LIFE BUDGET - Personal Finance Tracker
+// Connected to Supabase backend
 // ============================================
-
-interface Expense {
-  id: string
-  description: string
-  amount: number
-  category: string
-  date: string
-}
-
-interface CategoryAllocation {
-  id: string
-  name: string
-  emoji: string
-  amount: number
-  color: string
-}
 
 function formatCurrency(amount: number): string {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(Math.abs(amount))
 }
 
-function getInitials(name: string): string {
-  if (!name) return '?'
-  return name.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2)
+function formatDate(dateStr: string): string {
+  const date = new Date(dateStr)
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
-function generateId(): string {
-  return Math.random().toString(36).slice(2, 15)
+function formatDateTime(dateStr: string): string {
+  const date = new Date(dateStr)
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + 
+    ', ' + date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
 }
 
 // Get weeks in month with actual date ranges
@@ -59,351 +64,29 @@ function getWeeksInMonth(year: number, month: number): { label: string; start: D
   return weeks
 }
 
-const MOCK_USER_NAME = 'You'
+function getInitials(email: string): string {
+  if (!email) return 'U'
+  return email.charAt(0).toUpperCase()
+}
 
-// Vibrant, aesthetic color palette
-const CATEGORY_COLORS = [
+// Color palette for categories
+const COLOR_OPTIONS = [
   '#22c55e', // green
   '#3b82f6', // blue
-  '#f59e0b', // amber/orange
+  '#f59e0b', // amber
   '#ec4899', // pink
   '#8b5cf6', // purple
   '#14b8a6', // teal
   '#f97316', // orange
   '#06b6d4', // cyan
+  '#ef4444', // red
+  '#84cc16', // lime
 ]
 
-const INITIAL_TOTAL_MONTHLY = 2000
-const INITIAL_CATEGORIES: CategoryAllocation[] = [
-  { id: 'c1', name: 'Food', emoji: '🛒', amount: 500, color: CATEGORY_COLORS[0] },
-  { id: 'c2', name: 'Transport', emoji: '🚗', amount: 200, color: CATEGORY_COLORS[1] },
-  { id: 'c3', name: 'Utilities', emoji: '💡', amount: 150, color: CATEGORY_COLORS[2] },
-  { id: 'c4', name: 'Subscriptions', emoji: '📱', amount: 50, color: CATEGORY_COLORS[3] },
-  { id: 'c5', name: 'Other', emoji: '📦', amount: 200, color: CATEGORY_COLORS[4] },
-]
+// Emoji options for categories
+const EMOJI_OPTIONS = ['🛒', '🚗', '💡', '📱', '📦', '🏠', '🎮', '✈️', '🍔', '☕', '👕', '💊', '🎬', '📚', '💪', '🎁']
 
-// Mock expenses spread across weeks
-const now = new Date()
-const thisMonth = now.getMonth()
-const thisYear = now.getFullYear()
-const INITIAL_EXPENSES: Expense[] = [
-  { id: '1', description: 'Groceries', amount: 120, category: 'Food', date: `${thisYear}-${String(thisMonth + 1).padStart(2, '0')}-03` },
-  { id: '2', description: 'Coffee', amount: 25, category: 'Food', date: `${thisYear}-${String(thisMonth + 1).padStart(2, '0')}-05` },
-  { id: '3', description: 'Restaurant', amount: 85, category: 'Food', date: `${thisYear}-${String(thisMonth + 1).padStart(2, '0')}-12` },
-  { id: '4', description: 'Gas', amount: 60, category: 'Transport', date: `${thisYear}-${String(thisMonth + 1).padStart(2, '0')}-02` },
-  { id: '5', description: 'Uber', amount: 35, category: 'Transport', date: `${thisYear}-${String(thisMonth + 1).padStart(2, '0')}-08` },
-  { id: '6', description: 'Electricity', amount: 85, category: 'Utilities', date: `${thisYear}-${String(thisMonth + 1).padStart(2, '0')}-01` },
-  { id: '7', description: 'Water', amount: 30, category: 'Utilities', date: `${thisYear}-${String(thisMonth + 1).padStart(2, '0')}-01` },
-  { id: '8', description: 'Internet', amount: 55, category: 'Utilities', date: `${thisYear}-${String(thisMonth + 1).padStart(2, '0')}-01` },
-  { id: '9', description: 'Netflix', amount: 15, category: 'Subscriptions', date: `${thisYear}-${String(thisMonth + 1).padStart(2, '0')}-01` },
-  { id: '10', description: 'Spotify', amount: 10, category: 'Subscriptions', date: `${thisYear}-${String(thisMonth + 1).padStart(2, '0')}-01` },
-  { id: '11', description: 'Misc shopping', amount: 250, category: 'Other', date: `${thisYear}-${String(thisMonth + 1).padStart(2, '0')}-10` },
-]
-
-const styles = `
-  .budget-page {
-    min-height: 100vh;
-    padding-bottom: 120px;
-    background: linear-gradient(180deg, #050d18 0%, #0a1628 15%, #142136 35%, #1a2d4a 50%, #142136 65%, #0a1628 85%, #050d18 100%);
-    color: #e2e8f0;
-  }
-  .budget-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 16px 20px;
-    background: rgba(255,255,255,0.06);
-    border-bottom: 1px solid rgba(255,255,255,0.08);
-  }
-  .budget-header-left { display: flex; align-items: center; gap: 12px; }
-  .budget-back-btn {
-    display: flex; align-items: center; justify-content: center;
-    width: 40px; height: 40px; border-radius: 12px;
-    background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08);
-    color: #94a3b8; text-decoration: none;
-  }
-  .budget-back-btn:hover { background: rgba(255,255,255,0.1); color: #e2e8f0; }
-  .budget-header-title { font-size: 1.25rem; font-weight: 600; color: #f1f5f9; margin: 0; }
-  .budget-header-subtitle { font-size: 0.75rem; color: #64748b; margin: 0; }
-  .budget-header-avatar {
-    width: 40px; height: 40px; border-radius: 50%;
-    background: linear-gradient(135deg, #3b82f6, #2563eb);
-    display: flex; align-items: center; justify-content: center;
-    font-size: 0.875rem; font-weight: 600; color: #fff;
-  }
-  .budget-section { padding: 20px; }
-  .budget-total-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 16px;
-  }
-  .budget-total-label { font-size: 0.875rem; color: #94a3b8; }
-  .budget-total-value {
-    font-size: 1.5rem;
-    font-weight: 700;
-    color: #60a5fa;
-    cursor: pointer;
-  }
-  .budget-total-edit {
-    background: rgba(255,255,255,0.06);
-    border: 1px solid rgba(255,255,255,0.12);
-    border-radius: 8px;
-    color: #e2e8f0;
-    font-size: 1.25rem;
-    font-weight: 600;
-    padding: 8px 12px;
-    width: 100px;
-    text-align: right;
-  }
-  .budget-total-edit:focus { outline: none; border-color: #3b82f6; }
-  .budget-pie-container {
-    position: relative;
-    width: 100%;
-    max-width: 360px;
-    height: 360px;
-    margin: 0 auto 16px;
-  }
-  .budget-pie-center {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    text-align: center;
-    pointer-events: none;
-  }
-  .budget-pie-center-label { font-size: 0.75rem; color: #64748b; }
-  .budget-pie-center-amount { font-size: 1.75rem; font-weight: 700; color: #f1f5f9; }
-  .budget-pie-center-sub { font-size: 0.75rem; color: #94a3b8; margin-top: 2px; }
-  .budget-add-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    padding: 12px 24px;
-    border-radius: 20px;
-    background: linear-gradient(135deg, #3b82f6, #2563eb);
-    border: none;
-    color: #fff;
-    font-size: 0.875rem;
-    font-weight: 600;
-    cursor: pointer;
-    box-shadow: 0 4px 14px rgba(59, 130, 246, 0.3);
-    margin: 0 auto 20px;
-  }
-  .budget-add-btn:hover { filter: brightness(1.1); }
-  .budget-pie-legend {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 12px 20px;
-    margin-bottom: 24px;
-  }
-  .budget-legend-item {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 0.8125rem;
-    color: #cbd5e1;
-    cursor: pointer;
-    padding: 4px 8px;
-    border-radius: 8px;
-    transition: background 0.15s;
-  }
-  .budget-legend-item:hover { background: rgba(255,255,255,0.06); }
-  .budget-legend-dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-  }
-  .budget-legend-name { font-weight: 500; }
-  .budget-legend-amount { color: #94a3b8; }
-  .budget-view-toggle {
-    display: flex;
-    background: rgba(255,255,255,0.06);
-    border-radius: 12px;
-    padding: 4px;
-    margin-bottom: 20px;
-  }
-  .budget-view-toggle-btn {
-    flex: 1;
-    padding: 10px 16px;
-    border-radius: 10px;
-    border: none;
-    background: transparent;
-    color: #94a3b8;
-    font-size: 0.875rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-  .budget-view-toggle-btn.active {
-    background: linear-gradient(135deg, #3b82f6, #2563eb);
-    color: #fff;
-    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.25);
-  }
-  .budget-week-nav {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 16px;
-  }
-  .budget-week-nav-btn {
-    width: 36px; height: 36px; border-radius: 10px;
-    background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08);
-    color: #94a3b8; cursor: pointer;
-    display: flex; align-items: center; justify-content: center;
-  }
-  .budget-week-nav-btn:hover { background: rgba(255,255,255,0.1); color: #e2e8f0; }
-  .budget-week-nav-btn:disabled { opacity: 0.3; cursor: not-allowed; }
-  .budget-week-label { font-size: 1rem; font-weight: 600; color: #e2e8f0; }
-  .budget-category-card {
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 16px;
-    padding: 16px;
-    margin-bottom: 12px;
-  }
-  .budget-category-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 12px;
-  }
-  .budget-category-left { display: flex; align-items: center; gap: 12px; }
-  .budget-category-icon {
-    width: 44px; height: 44px; border-radius: 12px;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 1.25rem;
-  }
-  .budget-category-info {}
-  .budget-category-name { font-weight: 600; font-size: 1rem; color: #e2e8f0; }
-  .budget-category-budget { font-size: 0.75rem; color: #64748b; }
-  .budget-category-right { text-align: right; }
-  .budget-category-spent { font-weight: 700; font-size: 1.125rem; color: #e2e8f0; }
-  .budget-category-left-amount { font-size: 0.75rem; color: #64748b; }
-  .budget-category-left-amount.over { color: #f87171; }
-  .budget-category-progress {
-    height: 8px;
-    background: rgba(255,255,255,0.1);
-    border-radius: 4px;
-    overflow: hidden;
-    margin-top: 8px;
-  }
-  .budget-category-progress-fill {
-    height: 100%;
-    border-radius: 4px;
-    transition: width 0.3s ease;
-  }
-  .budget-expense-row {
-    padding: 12px 0;
-    border-top: 1px solid rgba(255,255,255,0.06);
-  }
-  .budget-expense-row-top {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    margin-bottom: 6px;
-  }
-  .budget-expense-name { font-size: 0.9375rem; color: #cbd5e1; }
-  .budget-expense-amounts { text-align: right; }
-  .budget-expense-spent { font-size: 0.9375rem; font-weight: 600; color: #e2e8f0; }
-  .budget-expense-left { font-size: 0.75rem; color: #64748b; }
-  .budget-expense-left.over { color: #f87171; }
-  .budget-expense-progress {
-    height: 6px;
-    background: rgba(255,255,255,0.1);
-    border-radius: 3px;
-    overflow: hidden;
-  }
-  .budget-expense-progress-fill {
-    height: 100%;
-    border-radius: 3px;
-    transition: width 0.2s;
-  }
-  .budget-empty-week {
-    text-align: center;
-    padding: 24px 20px;
-    color: #64748b;
-    font-size: 0.875rem;
-  }
-  .budget-modal-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0,0,0,0.6);
-    display: flex;
-    align-items: flex-end;
-    justify-content: center;
-    z-index: 100;
-  }
-  .budget-modal {
-    background: #0f172a;
-    border-radius: 20px 20px 0 0;
-    width: 100%;
-    max-width: 480px;
-    max-height: 85vh;
-    overflow-y: auto;
-    padding: 24px;
-    border: 1px solid rgba(255,255,255,0.1);
-  }
-  .budget-modal-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 20px;
-  }
-  .budget-modal-header h2 { font-size: 1.25rem; font-weight: 600; color: #f1f5f9; margin: 0; }
-  .budget-modal-close {
-    width: 40px; height: 40px; border-radius: 12px;
-    background: rgba(255,255,255,0.06); border: none;
-    color: #94a3b8; cursor: pointer;
-    display: flex; align-items: center; justify-content: center;
-  }
-  .budget-modal-close:hover { background: rgba(255,255,255,0.1); color: #e2e8f0; }
-  .budget-form-group { margin-bottom: 16px; }
-  .budget-form-group label { display: block; font-size: 0.8125rem; font-weight: 500; color: #94a3b8; margin-bottom: 6px; }
-  .budget-input, .budget-select {
-    width: 100%;
-    padding: 12px 14px;
-    border-radius: 10px;
-    border: 1px solid rgba(255,255,255,0.12);
-    background: rgba(255,255,255,0.04);
-    color: #e2e8f0;
-    font-size: 1rem;
-  }
-  .budget-input:focus, .budget-select:focus {
-    outline: none;
-    border-color: #3b82f6;
-    background: rgba(59, 130, 246, 0.05);
-  }
-  .budget-submit-btn {
-    width: 100%;
-    padding: 14px;
-    border-radius: 12px;
-    border: none;
-    background: linear-gradient(135deg, #3b82f6, #2563eb);
-    color: #fff;
-    font-size: 1rem;
-    font-weight: 600;
-    cursor: pointer;
-    margin-top: 8px;
-  }
-  .budget-submit-btn:hover { filter: brightness(1.1); }
-  .budget-modal-error { font-size: 0.875rem; color: #f87171; margin-bottom: 12px; }
-  
-  .recharts-tooltip-wrapper { outline: none; }
-  .custom-tooltip {
-    background: rgba(15, 23, 42, 0.95);
-    border: 1px solid rgba(255,255,255,0.15);
-    border-radius: 10px;
-    padding: 10px 14px;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.3);
-  }
-  .custom-tooltip-name { font-weight: 600; color: #f1f5f9; font-size: 0.875rem; }
-  .custom-tooltip-value { color: #94a3b8; font-size: 0.8125rem; margin-top: 2px; }
-`
-
-// Custom tooltip for pie chart
+// ============ Custom Tooltip ============
 const CustomTooltip = ({ active, payload }: any) => {
   if (active && payload && payload.length) {
     const data = payload[0].payload
@@ -427,76 +110,111 @@ const CustomTooltip = ({ active, payload }: any) => {
   return null
 }
 
-// Custom label for pie chart
-const renderCustomizedLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, name, percent, isUnspent }: any) => {
-  // Don't show label for very small segments or unspent
-  if (percent < 0.08 || isUnspent) return null
-  
-  const RADIAN = Math.PI / 180
-  const radius = innerRadius + (outerRadius - innerRadius) * 0.5
-  const x = cx + radius * Math.cos(-midAngle * RADIAN)
-  const y = cy + radius * Math.sin(-midAngle * RADIAN)
-
-  return (
-    <text 
-      x={x} 
-      y={y} 
-      fill="white" 
-      textAnchor="middle" 
-      dominantBaseline="central"
-      style={{ fontSize: '11px', fontWeight: 600, textShadow: '0 1px 3px rgba(0,0,0,0.5)' }}
-    >
-      {name}
-    </text>
-  )
-}
-
+// ============ Main Component ============
 export default function BudgetPage() {
-  const now = new Date()
-  const [totalMonthly, setTotalMonthly] = useState(INITIAL_TOTAL_MONTHLY)
-  const [categories, setCategories] = useState<CategoryAllocation[]>(INITIAL_CATEGORIES)
-  const [expenses, setExpenses] = useState<Expense[]>(INITIAL_EXPENSES)
+  const [user, setUser] = useState<User | null>(null)
+  const [authLoading, setAuthLoading] = useState(true)
+  
+  // Data state
+  const [totalBudget, setTotalBudget] = useState(2000)
+  const [categories, setCategories] = useState<BudgetCategory[]>([])
+  const [localExpenses, setLocalExpenses] = useState<BudgetExpense[]>([]) // For dev mode
+  const [dataLoading, setDataLoading] = useState(true)
+  const [currentMonth] = useState(getCurrentMonth())
+  
+  // UI state
   const [showAddModal, setShowAddModal] = useState(false)
+  const [showNewCategoryModal, setShowNewCategoryModal] = useState(false)
+  const [showManageBudgetModal, setShowManageBudgetModal] = useState(false)
   const [editingTotal, setEditingTotal] = useState(false)
-  const [showEditCategoryModal, setShowEditCategoryModal] = useState(false)
-  const [editingCategory, setEditingCategory] = useState<CategoryAllocation | null>(null)
+  const [selectedCategory, setSelectedCategory] = useState<BudgetCategory | null>(null)
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const [viewMode, setViewMode] = useState<'month' | 'week'>('month')
+  const [selectedWeekIdx, setSelectedWeekIdx] = useState(0)
 
-  // Calculate spent per category for the whole month
-  const spentByCategory = useMemo(() => {
-    const map: Record<string, number> = {}
-    categories.forEach((c) => { map[c.name] = 0 })
-    expenses.forEach((e) => {
-      if (map[e.category] !== undefined) {
-        map[e.category] += e.amount
-      }
+  // Dev bypass
+  const devBypass = process.env.NEXT_PUBLIC_DEV_BYPASS_AUTH === 'true' || !isSupabaseConfigured
+
+  // Show toast
+  const showToast = useCallback((message: string, type: 'success' | 'error' = 'success') => {
+    setToast({ message, type })
+    setTimeout(() => setToast(null), 3000)
+  }, [])
+
+  // Auth check
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null)
+      setAuthLoading(false)
     })
-    return map
-  }, [expenses, categories])
 
-  const totalSpent = useMemo(() => Object.values(spentByCategory).reduce((s, v) => s + v, 0), [spentByCategory])
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null)
+    })
 
-  // Pie chart data - shows actual spending + unspent as grey
-  const pieData = useMemo(() => {
-    const categoryData = categories.map((cat) => ({
-      id: cat.id,
-      name: cat.name,
-      emoji: cat.emoji,
-      color: cat.color,
-      budget: cat.amount,
-      spent: spentByCategory[cat.name] || 0,
-      value: spentByCategory[cat.name] || 0,
-      isUnspent: false,
-    })).filter(d => d.value > 0) // only show categories with spending
+    return () => subscription.unsubscribe()
+  }, [])
+
+  // Load data
+  const loadData = useCallback(async () => {
+    if (!user && !devBypass) return
     
-    // Add unspent segment if budget > spent
-    const unspent = totalMonthly - totalSpent
+    setDataLoading(true)
+    
+    // Ensure seed data exists
+    await ensureBudgetSeed(currentMonth)
+    
+    // Fetch budget
+    const { data: budgetData } = await getBudget(currentMonth)
+    if (budgetData) {
+      setTotalBudget(Number(budgetData.total_budget))
+    }
+    
+    // Fetch categories with spent
+    const { data: categoriesData, error } = await getCategoriesWithSpent(currentMonth)
+    if (error) {
+      console.error('Error loading categories:', error)
+      showToast('Failed to load categories', 'error')
+    } else if (categoriesData) {
+      setCategories(categoriesData)
+    }
+    
+    setDataLoading(false)
+  }, [user, devBypass, currentMonth, showToast])
+
+  useEffect(() => {
+    if (!authLoading) {
+      loadData()
+    }
+  }, [authLoading, loadData])
+
+  // Calculated values
+  const totalSpent = useMemo(() => 
+    categories.reduce((sum, cat) => sum + cat.spent, 0), 
+    [categories]
+  )
+
+  const pieData = useMemo(() => {
+    const categoryData = categories
+      .filter(cat => cat.spent > 0)
+      .map(cat => ({
+        id: cat.id,
+        name: cat.name,
+        emoji: cat.emoji,
+        color: cat.color || '#64748b',
+        budget: cat.limit_amount,
+        spent: cat.spent,
+        value: cat.spent,
+        isUnspent: false,
+      }))
+    
+    const unspent = totalBudget - totalSpent
     if (unspent > 0) {
       categoryData.push({
         id: 'unspent',
         name: 'Unspent',
         emoji: '',
-        color: 'rgba(100, 116, 139, 0.4)', // grey
+        color: 'rgba(100, 116, 139, 0.4)',
         budget: unspent,
         spent: 0,
         value: unspent,
@@ -505,27 +223,33 @@ export default function BudgetPage() {
     }
     
     return categoryData
-  }, [categories, spentByCategory, totalMonthly, totalSpent])
+  }, [categories, totalBudget, totalSpent])
 
   // Weeks in current month
+  const now = new Date()
   const weeks = useMemo(() => getWeeksInMonth(now.getFullYear(), now.getMonth()), [])
-  const [selectedWeekIdx, setSelectedWeekIdx] = useState(0)
   const selectedWeek = weeks[selectedWeekIdx]
 
-  // Expenses for selected week
+  // Expenses for selected week (from localExpenses in dev mode)
   const weekExpenses = useMemo(() => {
     if (!selectedWeek) return []
-    const startStr = selectedWeek.start.toISOString().slice(0, 10)
-    const endStr = selectedWeek.end.toISOString().slice(0, 10)
-    return expenses.filter((e) => e.date >= startStr && e.date <= endStr)
-  }, [expenses, selectedWeek])
+    // Use local date comparison to avoid timezone issues
+    const startTime = selectedWeek.start.getTime()
+    const endTime = new Date(selectedWeek.end.getFullYear(), selectedWeek.end.getMonth(), selectedWeek.end.getDate(), 23, 59, 59, 999).getTime()
+    
+    return localExpenses.filter((e) => {
+      const expDate = new Date(e.occurred_at)
+      const expTime = expDate.getTime()
+      return expTime >= startTime && expTime <= endTime
+    })
+  }, [localExpenses, selectedWeek])
 
-  // Group expenses by category for selected week
+  // Group week expenses by category
   const weekExpensesByCategory = useMemo(() => {
-    const map: Record<string, Expense[]> = {}
-    categories.forEach((c) => { map[c.name] = [] })
+    const map: Record<string, BudgetExpense[]> = {}
+    categories.forEach((c) => { map[c.id] = [] })
     weekExpenses.forEach((e) => {
-      if (map[e.category]) map[e.category].push(e)
+      if (map[e.category_id]) map[e.category_id].push(e)
     })
     return map
   }, [weekExpenses, categories])
@@ -534,52 +258,232 @@ export default function BudgetPage() {
   const weeklyBudgetPerCategory = useMemo(() => {
     const numWeeks = weeks.length || 1
     const map: Record<string, number> = {}
-    categories.forEach((c) => { map[c.name] = c.amount / numWeeks })
+    categories.forEach((c) => { map[c.id] = c.limit_amount / numWeeks })
     return map
   }, [categories, weeks.length])
 
-  const handlePieClick = useCallback(
-    (data: any) => {
-      if (!data || !data.id || data.isUnspent) return // ignore unspent segment clicks
-      const cat = categories.find((c) => c.id === data.id)
-      if (cat) {
-        setEditingCategory(cat)
-        setShowEditCategoryModal(true)
+  // Weekly spent per category
+  const weeklySpentByCategory = useMemo(() => {
+    const map: Record<string, number> = {}
+    categories.forEach((c) => { map[c.id] = 0 })
+    weekExpenses.forEach((e) => {
+      if (map[e.category_id] !== undefined) {
+        map[e.category_id] += e.amount
       }
-    },
-    [categories]
-  )
+    })
+    return map
+  }, [weekExpenses, categories])
 
-  const handleUpdateCategoryBudget = useCallback((categoryId: string, newAmount: number) => {
-    setCategories((prev) =>
-      prev.map((c) => (c.id === categoryId ? { ...c, amount: Math.max(0, newAmount) } : c))
-    )
-    setShowEditCategoryModal(false)
-    setEditingCategory(null)
+  // Handlers
+  const handleCategoryClick = useCallback((cat: BudgetCategory) => {
+    setSelectedCategory(cat)
   }, [])
 
-  const handleAddExpense = useCallback(
-    (description: string, amount: number, category: string, date?: string) => {
-      setExpenses((prev) => [
-        { id: generateId(), description, amount, category, date: date ?? now.toISOString().slice(0, 10) },
-        ...prev,
-      ])
-    },
-    []
-  )
+  const handleUpdateTotalBudget = useCallback(async (newTotal: number) => {
+    setTotalBudget(newTotal)
+    setEditingTotal(false)
+    
+    if (user) {
+      await updateTotalBudget(currentMonth, newTotal)
+    }
+  }, [user, currentMonth])
 
-  const handleLegendClick = useCallback(
-    (cat: CategoryAllocation) => {
-      setEditingCategory(cat)
-      setShowEditCategoryModal(true)
-    },
-    []
-  )
+  const handleUpdateCategoryBudget = useCallback(async (categoryId: string, newLimit: number) => {
+    // Optimistic update
+    setCategories(prev => prev.map(c => 
+      c.id === categoryId ? { ...c, limit_amount: newLimit } : c
+    ))
+    
+    if (user) {
+      const { error } = await updateCategoryBudget(categoryId, newLimit)
+      if (error) {
+        showToast('Failed to update budget', 'error')
+        loadData() // Revert
+      }
+    }
+  }, [user, loadData, showToast])
+
+  const handleAddExpense = useCallback(async (
+    categoryId: string,
+    title: string,
+    amount: number,
+    date: string,
+    note?: string
+  ) => {
+    if (!user && !devBypass) return
+    
+    // Dev mode: use local state
+    if (!isSupabaseConfigured) {
+      const newExpense: BudgetExpense = {
+        id: `exp-${Date.now()}`,
+        user_id: 'dev-user',
+        category_id: categoryId,
+        month: currentMonth,
+        title,
+        note: note || null,
+        amount,
+        occurred_at: date,
+        created_at: new Date().toISOString(),
+      }
+      setLocalExpenses(prev => [newExpense, ...prev])
+      // Update category spent
+      setCategories(prev => prev.map(c => 
+        c.id === categoryId ? { ...c, spent: c.spent + amount } : c
+      ))
+      showToast('Expense added!')
+      return
+    }
+    
+    const { error } = await addExpense(categoryId, title, amount, date, note)
+    
+    if (error) {
+      showToast('Failed to add expense', 'error')
+    } else {
+      showToast('Expense added!')
+      loadData() // Refresh data
+    }
+  }, [user, devBypass, currentMonth, loadData, showToast])
+
+  const handleDeleteExpense = useCallback(async (expenseId: string, categoryId: string, amount: number) => {
+    if (!user && !devBypass) return
+    
+    // Dev mode: use local state
+    if (!isSupabaseConfigured) {
+      setLocalExpenses(prev => prev.filter(e => e.id !== expenseId))
+      // Update category spent
+      setCategories(prev => prev.map(c => 
+        c.id === categoryId ? { ...c, spent: Math.max(0, c.spent - amount) } : c
+      ))
+      showToast('Expense deleted')
+      return
+    }
+    
+    const { error } = await deleteExpense(expenseId)
+    
+    if (error) {
+      showToast('Failed to delete expense', 'error')
+    } else {
+      showToast('Expense deleted')
+      loadData() // Refresh data
+    }
+  }, [user, devBypass, loadData, showToast])
+
+  const handleCreateCategory = useCallback(async (
+    name: string,
+    emoji: string,
+    color: string,
+    limitAmount: number
+  ) => {
+    if (!user && !devBypass) return
+    
+    // Dev mode: use local state
+    if (!isSupabaseConfigured) {
+      const newCategory: BudgetCategory = {
+        id: `cat-${Date.now()}`,
+        user_id: 'dev-user',
+        month: currentMonth,
+        name,
+        emoji,
+        color,
+        limit_amount: limitAmount,
+        spent: 0,
+      }
+      setCategories(prev => [...prev, newCategory])
+      showToast('Category created!')
+      setShowNewCategoryModal(false)
+      return
+    }
+    
+    const { data, error } = await createCategory(currentMonth, name, emoji, color, limitAmount)
+    
+    if (error) {
+      showToast('Failed to create category', 'error')
+    } else if (data) {
+      setCategories(prev => [...prev, data])
+      showToast('Category created!')
+      setShowNewCategoryModal(false)
+    }
+  }, [user, devBypass, currentMonth, showToast])
+
+  const handleDeleteCategory = useCallback(async (categoryId: string) => {
+    if (!user && !devBypass) return
+    
+    // Dev mode: use local state
+    if (!isSupabaseConfigured) {
+      setCategories(prev => prev.filter(c => c.id !== categoryId))
+      setSelectedCategory(null)
+      showToast('Category deleted')
+      return
+    }
+    
+    const { error } = await deleteCategory(categoryId)
+    
+    if (error) {
+      showToast('Failed to delete category', 'error')
+    } else {
+      setCategories(prev => prev.filter(c => c.id !== categoryId))
+      setSelectedCategory(null)
+      showToast('Category deleted')
+    }
+  }, [user, devBypass, showToast])
+
+  const handleUpdateCategoryDetails = useCallback(async (
+    categoryId: string,
+    updates: { name?: string; emoji?: string; color?: string }
+  ) => {
+    if (!user && !devBypass) return
+    
+    // Dev mode: use local state
+    if (!isSupabaseConfigured) {
+      setCategories(prev => prev.map(c => 
+        c.id === categoryId ? { ...c, ...updates } : c
+      ))
+      if (selectedCategory?.id === categoryId) {
+        setSelectedCategory(prev => prev ? { ...prev, ...updates } : null)
+      }
+      showToast('Category updated!')
+      return
+    }
+    
+    const { error } = await updateCategory(categoryId, updates)
+    
+    if (error) {
+      showToast('Failed to update category', 'error')
+    } else {
+      setCategories(prev => prev.map(c => 
+        c.id === categoryId ? { ...c, ...updates } : c
+      ))
+      if (selectedCategory?.id === categoryId) {
+        setSelectedCategory(prev => prev ? { ...prev, ...updates } : null)
+      }
+    }
+  }, [user, devBypass, showToast, selectedCategory])
+
+  // Loading state
+  if (authLoading) {
+    return (
+      <div className="budget-page">
+        <style dangerouslySetInnerHTML={{ __html: styles }} />
+        <div className="budget-loading">
+          <div className="budget-spinner" />
+          <p>Loading...</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="budget-page">
-      <style>{styles}</style>
+      <style dangerouslySetInnerHTML={{ __html: styles }} />
 
+      {/* Toast */}
+      {toast && (
+        <div className={`budget-toast ${toast.type}`}>
+          {toast.message}
+        </div>
+      )}
+
+      {/* Header */}
       <header className="budget-header">
         <div className="budget-header-left">
           <Link href="/" className="budget-back-btn">
@@ -589,71 +493,83 @@ export default function BudgetPage() {
           </Link>
           <div>
             <h1 className="budget-header-title">Life Budget</h1>
-            <p className="budget-header-subtitle">{MOCK_USER_NAME} • Demo Mode</p>
+            <p className="budget-header-subtitle">
+              {user?.email || (devBypass ? 'Dev Mode' : 'Not signed in')}
+            </p>
           </div>
         </div>
-        <div className="budget-header-avatar">{getInitials(MOCK_USER_NAME)}</div>
+        <div className="budget-header-avatar">
+          {getInitials(user?.email || 'U')}
+        </div>
       </header>
 
       <section className="budget-section">
+        {/* Total Budget */}
         <div className="budget-total-row">
           <span className="budget-total-label">Monthly Budget</span>
           {editingTotal ? (
             <input
               type="number"
               className="budget-total-edit"
-              value={totalMonthly}
-              onChange={(e) => setTotalMonthly(Number(e.target.value) || 0)}
-              onBlur={() => setEditingTotal(false)}
+              value={totalBudget}
+              onChange={(e) => setTotalBudget(Number(e.target.value) || 0)}
+              onBlur={() => handleUpdateTotalBudget(totalBudget)}
+              onKeyDown={(e) => e.key === 'Enter' && handleUpdateTotalBudget(totalBudget)}
               autoFocus
               min={0}
               step={50}
             />
           ) : (
-            <span className="budget-total-value" onClick={() => setEditingTotal(true)} role="button" tabIndex={0}>
-              {formatCurrency(totalMonthly)}
+            <span 
+              className="budget-total-value" 
+              onClick={() => setEditingTotal(true)}
+            >
+              {formatCurrency(totalBudget)}
             </span>
           )}
         </div>
 
-        {/* Pie chart */}
-        <div className="budget-pie-container">
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie
-                data={pieData}
-                cx="50%"
-                cy="50%"
-                innerRadius={80}
-                outerRadius={140}
-                paddingAngle={3}
-                dataKey="value"
-                onClick={handlePieClick}
-                label={renderCustomizedLabel}
-                labelLine={false}
-                style={{ cursor: 'pointer', outline: 'none' }}
-              >
-                {pieData.map((entry, index) => (
-                  <Cell 
-                    key={`cell-${index}`} 
-                    fill={entry.color}
-                    stroke="rgba(0,0,0,0.2)"
-                    strokeWidth={2}
-                  />
-                ))}
-              </Pie>
-              <Tooltip content={<CustomTooltip />} />
-            </PieChart>
-          </ResponsiveContainer>
-          <div className="budget-pie-center">
-            <div className="budget-pie-center-label">Total Spent</div>
-            <div className="budget-pie-center-amount">{formatCurrency(totalSpent)}</div>
-            <div className="budget-pie-center-sub">of {formatCurrency(totalMonthly)}</div>
+        {/* Pie Chart */}
+        {dataLoading ? (
+          <div className="budget-pie-loading">
+            <div className="budget-spinner" />
           </div>
-        </div>
+        ) : (
+          <div className="budget-pie-container">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={pieData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={80}
+                  outerRadius={140}
+                  paddingAngle={3}
+                  dataKey="value"
+                  style={{ cursor: 'pointer', outline: 'none' }}
+                >
+                  {pieData.map((entry, index) => (
+                    <Cell 
+                      key={`cell-${index}`} 
+                      fill={entry.color}
+                      stroke="rgba(0,0,0,0.2)"
+                      strokeWidth={2}
+                    />
+                  ))}
+                </Pie>
+                <Tooltip content={<CustomTooltip />} />
+              </PieChart>
+            </ResponsiveContainer>
+            <div className="budget-pie-center">
+              <div className="budget-pie-center-label">Total Spent</div>
+              <div className="budget-pie-center-amount">{formatCurrency(totalSpent)}</div>
+              <div className="budget-pie-center-sub">of {formatCurrency(totalBudget)}</div>
+            </div>
+          </div>
+        )}
 
-        {/* Add expense button */}
-        <button type="button" className="budget-add-btn" onClick={() => setShowAddModal(true)}>
+        {/* Add Expense Button */}
+        <button className="budget-add-btn" onClick={() => setShowAddModal(true)}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
             <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
           </svg>
@@ -661,22 +577,24 @@ export default function BudgetPage() {
         </button>
 
         {/* Legend */}
-        <div className="budget-pie-legend">
-          {categories.map((cat) => (
-            <div 
-              key={cat.id} 
-              className="budget-legend-item"
-              onClick={() => handleLegendClick(cat)}
-            >
-              <div className="budget-legend-dot" style={{ background: cat.color }} />
-              <span className="budget-legend-name">{cat.emoji} {cat.name}</span>
-              <span className="budget-legend-amount">{formatCurrency(spentByCategory[cat.name] || 0)}</span>
-            </div>
-          ))}
-        </div>
+        {categories.length > 0 && (
+          <div className="budget-pie-legend">
+            {categories.map((cat) => (
+              <div 
+                key={cat.id} 
+                className="budget-legend-item"
+                onClick={() => handleCategoryClick(cat)}
+              >
+                <div className="budget-legend-dot" style={{ background: cat.color || '#64748b' }} />
+                <span className="budget-legend-name">{cat.emoji} {cat.name}</span>
+                <span className="budget-legend-amount">{formatCurrency(cat.spent)}</span>
+              </div>
+            ))}
+          </div>
+        )}
 
-        {/* View toggle */}
-        <div className="budget-view-toggle" style={{ marginTop: 24 }}>
+        {/* View Toggle */}
+        <div className="budget-view-toggle">
           <button
             type="button"
             className={`budget-view-toggle-btn ${viewMode === 'month' ? 'active' : ''}`}
@@ -693,30 +611,83 @@ export default function BudgetPage() {
           </button>
         </div>
 
-        {viewMode === 'month' ? (
-          /* Monthly view - progress bars per category */
+        {/* Category Header */}
+        <div className="budget-categories-header">
+          <div className="budget-categories-title">
+            {viewMode === 'month' ? 'Categories' : 'Weekly Breakdown'}
+          </div>
+          <div className="budget-categories-actions">
+            <button 
+              className="budget-manage-btn"
+              onClick={() => setShowManageBudgetModal(true)}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+              </svg>
+              Manage
+            </button>
+            <button 
+              className="budget-new-category-btn"
+              onClick={() => setShowNewCategoryModal(true)}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+              New
+            </button>
+          </div>
+        </div>
+
+        {dataLoading ? (
+          <div className="budget-loading-inline">Loading categories...</div>
+        ) : categories.length === 0 ? (
+          <div className="budget-empty-categories">
+            <div className="budget-empty-icon">📁</div>
+            <h3>No categories yet</h3>
+            <p>Create your first budget category to start tracking expenses</p>
+            <button 
+              className="budget-empty-btn"
+              onClick={() => setShowNewCategoryModal(true)}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+              Create Category
+            </button>
+          </div>
+        ) : viewMode === 'month' ? (
+          /* Monthly View - progress bars per category */
           <div>
             {categories.map((cat) => {
-              const spent = spentByCategory[cat.name] || 0
-              const budget = cat.amount
-              const left = budget - spent
-              const pct = budget > 0 ? Math.min(100, (spent / budget) * 100) : 0
-              const over = spent > budget
+              const left = cat.limit_amount - cat.spent
+              const pct = cat.limit_amount > 0 ? Math.min(100, (cat.spent / cat.limit_amount) * 100) : 0
+              const over = cat.spent > cat.limit_amount
 
               return (
-                <div key={cat.id} className="budget-category-card" onClick={() => handleLegendClick(cat)} style={{ cursor: 'pointer' }}>
+                <div 
+                  key={cat.id} 
+                  className="budget-category-card" 
+                  onClick={() => handleCategoryClick(cat)}
+                >
                   <div className="budget-category-header">
                     <div className="budget-category-left">
-                      <div className="budget-category-icon" style={{ background: over ? '#ef4444' : cat.color }}>{cat.emoji}</div>
+                      <div 
+                        className="budget-category-icon" 
+                        style={{ background: over ? '#ef4444' : (cat.color || '#64748b') }}
+                      >
+                        {cat.emoji}
+                      </div>
                       <div className="budget-category-info">
                         <div className="budget-category-name">{cat.name}</div>
-                        <div className="budget-category-budget">Budget: {formatCurrency(budget)}</div>
+                        <div className="budget-category-budget">Budget: {formatCurrency(cat.limit_amount)}</div>
                       </div>
                     </div>
                     <div className="budget-category-right">
-                      <div className="budget-category-spent" style={{ color: over ? '#f87171' : '#e2e8f0' }}>{formatCurrency(spent)}</div>
+                      <div className="budget-category-spent" style={{ color: over ? '#f87171' : '#e2e8f0' }}>
+                        {formatCurrency(cat.spent)}
+                      </div>
                       <div className={`budget-category-left-amount ${over ? 'over' : ''}`}>
-                        {over ? `Over by ${formatCurrency(spent - budget)}` : `Left ${formatCurrency(left)}`}
+                        {over ? `Over by ${formatCurrency(cat.spent - cat.limit_amount)}` : `Left ${formatCurrency(left)}`}
                       </div>
                     </div>
                   </div>
@@ -727,7 +698,7 @@ export default function BudgetPage() {
                         width: `${over ? 100 : pct}%`,
                         background: over
                           ? 'linear-gradient(90deg, #f87171, #ef4444)'
-                          : `linear-gradient(90deg, ${cat.color}, ${cat.color}dd)`,
+                          : `linear-gradient(90deg, ${cat.color || '#64748b'}, ${cat.color || '#64748b'}dd)`,
                       }}
                     />
                   </div>
@@ -736,8 +707,9 @@ export default function BudgetPage() {
             })}
           </div>
         ) : (
-          /* Weekly view */
+          /* Weekly View */
           <div>
+            {/* Week Navigation */}
             <div className="budget-week-nav">
               <button
                 type="button"
@@ -762,10 +734,11 @@ export default function BudgetPage() {
               </button>
             </div>
 
+            {/* Weekly Category Cards */}
             {categories.map((cat) => {
-              const catExpenses = weekExpensesByCategory[cat.name] || []
-              const weekBudget = weeklyBudgetPerCategory[cat.name] || 0
-              const totalCatSpent = catExpenses.reduce((s, e) => s + e.amount, 0)
+              const catExpenses = weekExpensesByCategory[cat.id] || []
+              const weekBudget = weeklyBudgetPerCategory[cat.id] || 0
+              const totalCatSpent = weeklySpentByCategory[cat.id] || 0
               const catLeft = weekBudget - totalCatSpent
               const catOver = totalCatSpent > weekBudget
               const catPct = weekBudget > 0 ? Math.min(100, (totalCatSpent / weekBudget) * 100) : 0
@@ -774,14 +747,21 @@ export default function BudgetPage() {
                 <div key={cat.id} className="budget-category-card">
                   <div className="budget-category-header">
                     <div className="budget-category-left">
-                      <div className="budget-category-icon" style={{ background: catOver ? '#ef4444' : cat.color }}>{cat.emoji}</div>
+                      <div 
+                        className="budget-category-icon" 
+                        style={{ background: catOver ? '#ef4444' : (cat.color || '#64748b') }}
+                      >
+                        {cat.emoji}
+                      </div>
                       <div className="budget-category-info">
                         <div className="budget-category-name">{cat.name}</div>
                         <div className="budget-category-budget">Weekly: {formatCurrency(weekBudget)}</div>
                       </div>
                     </div>
                     <div className="budget-category-right">
-                      <div className="budget-category-spent" style={{ color: catOver ? '#f87171' : '#e2e8f0' }}>{formatCurrency(totalCatSpent)}</div>
+                      <div className="budget-category-spent" style={{ color: catOver ? '#f87171' : '#e2e8f0' }}>
+                        {formatCurrency(totalCatSpent)}
+                      </div>
                       <div className={`budget-category-left-amount ${catOver ? 'over' : ''}`}>
                         {catOver ? `Over by ${formatCurrency(totalCatSpent - weekBudget)}` : `Left ${formatCurrency(catLeft)}`}
                       </div>
@@ -796,38 +776,26 @@ export default function BudgetPage() {
                         width: `${catOver ? 100 : catPct}%`,
                         background: catOver
                           ? 'linear-gradient(90deg, #f87171, #ef4444)'
-                          : `linear-gradient(90deg, ${cat.color}, ${cat.color}dd)`,
+                          : `linear-gradient(90deg, ${cat.color || '#64748b'}, ${cat.color || '#64748b'}dd)`,
                       }}
                     />
                   </div>
 
+                  {/* Expense items for this week */}
                   {catExpenses.length === 0 ? (
-                    <div className="budget-empty-week">No expenses this week</div>
+                    <div className="budget-week-empty">No expenses this week</div>
                   ) : (
-                    catExpenses.map((exp) => {
-                      const expPct = weekBudget > 0 ? Math.min(100, (exp.amount / weekBudget) * 100) : 0
-                      return (
-                        <div key={exp.id} className="budget-expense-row">
-                          <div className="budget-expense-row-top">
-                            <span className="budget-expense-name">{exp.description}</span>
-                            <div className="budget-expense-amounts">
-                              <div className="budget-expense-spent">{formatCurrency(exp.amount)}</div>
-                            </div>
-                          </div>
-                          <div className="budget-expense-progress">
-                            <div
-                              className="budget-expense-progress-fill"
-                              style={{ 
-                                width: `${expPct}%`,
-                                background: catOver
-                                  ? 'linear-gradient(90deg, #f87171, #ef4444)'
-                                  : `linear-gradient(90deg, ${cat.color}, ${cat.color}dd)`,
-                              }}
-                            />
-                          </div>
+                    catExpenses.map((exp) => (
+                      <div key={exp.id} className="budget-week-expense">
+                        <div className="budget-week-expense-info">
+                          <span className="budget-week-expense-title">{exp.title}</span>
+                          <span className="budget-week-expense-date">
+                            {new Date(exp.occurred_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                          </span>
                         </div>
-                      )
-                    })
+                        <span className="budget-week-expense-amount">{formatCurrency(exp.amount)}</span>
+                      </div>
+                    ))
                   )}
                 </div>
               )
@@ -836,128 +804,1666 @@ export default function BudgetPage() {
         )}
       </section>
 
+      {/* Add Expense Modal */}
       {showAddModal && (
         <AddExpenseModal
+          categories={categories}
           onClose={() => setShowAddModal(false)}
           onSubmit={handleAddExpense}
-          categories={categories.map((c) => ({ id: c.id, name: c.name }))}
-          defaultDate={now.toISOString().slice(0, 10)}
         />
       )}
 
-      {showEditCategoryModal && editingCategory && (
-        <EditCategoryModal
-          category={editingCategory}
-          onClose={() => { setShowEditCategoryModal(false); setEditingCategory(null) }}
-          onSave={handleUpdateCategoryBudget}
+      {/* New Category Modal */}
+      {showNewCategoryModal && (
+        <NewCategoryModal
+          onClose={() => setShowNewCategoryModal(false)}
+          onSubmit={handleCreateCategory}
+        />
+      )}
+
+      {/* Manage Budget Modal */}
+      {showManageBudgetModal && (
+        <ManageBudgetModal
+          categories={categories}
+          onClose={() => setShowManageBudgetModal(false)}
+          onUpdateBudget={handleUpdateCategoryBudget}
+        />
+      )}
+
+      {/* Category History Drawer */}
+      {selectedCategory && (
+        <CategoryHistoryDrawer
+          category={selectedCategory}
+          localExpenses={localExpenses}
+          isDevMode={!isSupabaseConfigured}
+          onClose={() => setSelectedCategory(null)}
+          onAddExpense={handleAddExpense}
+          onDeleteExpense={handleDeleteExpense}
+          onUpdateBudget={handleUpdateCategoryBudget}
+          onDeleteCategory={handleDeleteCategory}
+          onUpdateCategoryDetails={handleUpdateCategoryDetails}
+          onOpenAddExpenseModal={(categoryId) => {
+            setSelectedCategory(null) // Close drawer first
+            setShowAddModal(true) // Open main add expense modal
+          }}
         />
       )}
     </div>
   )
 }
 
+// ============ Add Expense Modal ============
 interface AddExpenseModalProps {
+  categories: BudgetCategory[]
   onClose: () => void
-  onSubmit: (description: string, amount: number, category: string, date?: string) => void
-  categories: { id: string; name: string }[]
-  defaultDate: string
+  onSubmit: (categoryId: string, title: string, amount: number, date: string, note?: string) => void
+  preselectedCategoryId?: string
 }
 
-function AddExpenseModal({ onClose, onSubmit, categories, defaultDate }: AddExpenseModalProps) {
-  const [description, setDescription] = useState('')
+function AddExpenseModal({ categories, onClose, onSubmit, preselectedCategoryId }: AddExpenseModalProps) {
+  const [title, setTitle] = useState('')
   const [amount, setAmount] = useState('')
-  const [category, setCategory] = useState(categories[0]?.id ?? '')
-  const [date, setDate] = useState(defaultDate)
+  const [categoryId, setCategoryId] = useState(preselectedCategoryId || categories[0]?.id || '')
+  const [date, setDate] = useState(new Date().toISOString().slice(0, 16))
+  const [note, setNote] = useState('')
   const [error, setError] = useState('')
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
+    
     const amountNum = parseFloat(amount)
-    if (!description.trim()) { setError('Enter a description'); return }
+    if (!title.trim()) { setError('Enter a title'); return }
     if (isNaN(amountNum) || amountNum <= 0) { setError('Enter a valid amount'); return }
-    const categoryName = categories.find((c) => c.id === category)?.name ?? category
-    onSubmit(description.trim(), amountNum, categoryName, date)
+    if (!categoryId) { setError('Select a category'); return }
+    
+    onSubmit(categoryId, title.trim(), amountNum, new Date(date).toISOString(), note.trim() || undefined)
     onClose()
   }
 
   return (
     <div className="budget-modal-overlay" onClick={onClose}>
-      <div className="budget-modal" onClick={(e) => e.stopPropagation()}>
+      <div className="budget-modal" onClick={e => e.stopPropagation()}>
         <div className="budget-modal-header">
-          <h2>Add expense</h2>
-          <button type="button" className="budget-modal-close" onClick={onClose}>
+          <h2>Add Expense</h2>
+          <button className="budget-modal-close" onClick={onClose}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
             </svg>
           </button>
         </div>
+        
         <form onSubmit={handleSubmit}>
           {error && <div className="budget-modal-error">{error}</div>}
+          
           <div className="budget-form-group">
-            <label>Description</label>
-            <input type="text" placeholder="e.g. Groceries" value={description} onChange={(e) => setDescription(e.target.value)} className="budget-input" autoFocus />
+            <label>Title / Merchant</label>
+            <input
+              type="text"
+              placeholder="e.g., Groceries at Walmart"
+              value={title}
+              onChange={e => setTitle(e.target.value)}
+              className="budget-input"
+              autoFocus
+            />
           </div>
+          
           <div className="budget-form-group">
             <label>Amount ($)</label>
-            <input type="number" placeholder="0.00" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} className="budget-input" />
+            <input
+              type="number"
+              placeholder="0.00"
+              step="0.01"
+              min="0"
+              value={amount}
+              onChange={e => setAmount(e.target.value)}
+              className="budget-input"
+            />
           </div>
+          
           <div className="budget-form-group">
             <label>Category</label>
-            <select value={category} onChange={(e) => setCategory(e.target.value)} className="budget-select">
-              {categories.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
+            <select
+              value={categoryId}
+              onChange={e => setCategoryId(e.target.value)}
+              className="budget-select"
+            >
+              {categories.map(c => (
+                <option key={c.id} value={c.id}>{c.emoji} {c.name}</option>
+              ))}
             </select>
           </div>
+          
           <div className="budget-form-group">
-            <label>Date</label>
-            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="budget-input" />
+            <label>Date & Time</label>
+            <input
+              type="datetime-local"
+              value={date}
+              onChange={e => setDate(e.target.value)}
+              className="budget-input"
+            />
           </div>
-          <button type="submit" className="budget-submit-btn">Add expense</button>
+          
+          <div className="budget-form-group">
+            <label>Note (optional)</label>
+            <input
+              type="text"
+              placeholder="Add a note..."
+              value={note}
+              onChange={e => setNote(e.target.value)}
+              className="budget-input"
+            />
+          </div>
+          
+          <button type="submit" className="budget-submit-btn">Add Expense</button>
         </form>
       </div>
     </div>
   )
 }
 
-interface EditCategoryModalProps {
-  category: CategoryAllocation
+// ============ New Category Modal ============
+interface NewCategoryModalProps {
   onClose: () => void
-  onSave: (categoryId: string, newAmount: number) => void
+  onSubmit: (name: string, emoji: string, color: string, limitAmount: number) => void
+}
+
+function NewCategoryModal({ onClose, onSubmit }: NewCategoryModalProps) {
+  const [name, setName] = useState('')
+  const [emoji, setEmoji] = useState(EMOJI_OPTIONS[0])
+  const [color, setColor] = useState(COLOR_OPTIONS[0])
+  const [limitAmount, setLimitAmount] = useState('')
+  const [error, setError] = useState('')
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    setError('')
+    
+    if (!name.trim()) { setError('Enter a category name'); return }
+    const limit = parseFloat(limitAmount)
+    if (isNaN(limit) || limit < 0) { setError('Enter a valid budget amount'); return }
+    
+    onSubmit(name.trim(), emoji, color, limit)
+  }
+
+  return (
+    <div className="budget-modal-overlay" onClick={onClose}>
+      <div className="budget-modal" onClick={e => e.stopPropagation()}>
+        <div className="budget-modal-header">
+          <h2>New Category</h2>
+          <button className="budget-modal-close" onClick={onClose}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+        
+        <form onSubmit={handleSubmit}>
+          {error && <div className="budget-modal-error">{error}</div>}
+          
+          <div className="budget-form-group">
+            <label>Category Name</label>
+            <input
+              type="text"
+              placeholder="e.g., Entertainment"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              className="budget-input"
+              autoFocus
+            />
+          </div>
+          
+          <div className="budget-form-group">
+            <label>Icon</label>
+            <div className="budget-emoji-picker">
+              {EMOJI_OPTIONS.map(e => (
+                <button
+                  key={e}
+                  type="button"
+                  className={`budget-emoji-btn ${emoji === e ? 'selected' : ''}`}
+                  onClick={() => setEmoji(e)}
+                >
+                  {e}
+                </button>
+              ))}
+            </div>
+          </div>
+          
+          <div className="budget-form-group">
+            <label>Color</label>
+            <div className="budget-color-picker">
+              {COLOR_OPTIONS.map(c => (
+                <button
+                  key={c}
+                  type="button"
+                  className={`budget-color-btn ${color === c ? 'selected' : ''}`}
+                  style={{ background: c }}
+                  onClick={() => setColor(c)}
+                />
+              ))}
+            </div>
+          </div>
+          
+          <div className="budget-form-group">
+            <label>Monthly Budget ($)</label>
+            <input
+              type="number"
+              placeholder="0"
+              step="10"
+              min="0"
+              value={limitAmount}
+              onChange={e => setLimitAmount(e.target.value)}
+              className="budget-input"
+            />
+          </div>
+          
+          <button type="submit" className="budget-submit-btn">Create Category</button>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// ============ Manage Budget Modal ============
+interface ManageBudgetModalProps {
+  categories: BudgetCategory[]
+  onClose: () => void
+  onUpdateBudget: (categoryId: string, newLimit: number) => void
+}
+
+function ManageBudgetModal({ categories, onClose, onUpdateBudget }: ManageBudgetModalProps) {
+  const [budgets, setBudgets] = useState<Record<string, string>>(() => {
+    const initial: Record<string, string> = {}
+    categories.forEach(cat => {
+      initial[cat.id] = String(cat.limit_amount)
+    })
+    return initial
+  })
+
+  const handleSave = () => {
+    categories.forEach(cat => {
+      const newLimit = parseFloat(budgets[cat.id])
+      if (!isNaN(newLimit) && newLimit >= 0 && newLimit !== cat.limit_amount) {
+        onUpdateBudget(cat.id, newLimit)
+      }
+    })
+    onClose()
+  }
+
+  const totalBudget = Object.values(budgets).reduce((sum, val) => {
+    const num = parseFloat(val)
+    return sum + (isNaN(num) ? 0 : num)
+  }, 0)
+
+  return (
+    <div className="budget-modal-overlay" onClick={onClose}>
+      <div className="budget-modal" onClick={e => e.stopPropagation()}>
+        <div className="budget-modal-header">
+          <h2>Manage Budgets</h2>
+          <button className="budget-modal-close" onClick={onClose}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+        
+        <div className="budget-manage-total">
+          <span>Total allocated:</span>
+          <span className="budget-manage-total-amount">{formatCurrency(totalBudget)}</span>
+        </div>
+        
+        <div className="budget-manage-list">
+          {categories.length === 0 ? (
+            <div className="budget-manage-empty">No categories to manage. Create a category first.</div>
+          ) : (
+            categories.map(cat => (
+              <div key={cat.id} className="budget-manage-item">
+                <div className="budget-manage-item-info">
+                  <span className="budget-manage-item-emoji" style={{ background: (cat.color || '#64748b') + '33' }}>
+                    {cat.emoji}
+                  </span>
+                  <span className="budget-manage-item-name">{cat.name}</span>
+                </div>
+                <div className="budget-manage-item-input">
+                  <span className="budget-manage-currency">$</span>
+                  <input
+                    type="number"
+                    value={budgets[cat.id]}
+                    onChange={e => setBudgets(prev => ({ ...prev, [cat.id]: e.target.value }))}
+                    className="budget-input budget-manage-input"
+                    min="0"
+                    step="10"
+                  />
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+        
+        <button type="button" className="budget-submit-btn" onClick={handleSave}>
+          Save All Changes
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ============ Category History Drawer ============
+interface CategoryHistoryDrawerProps {
+  category: BudgetCategory
+  localExpenses: BudgetExpense[]
+  isDevMode: boolean
+  onClose: () => void
+  onAddExpense: (categoryId: string, title: string, amount: number, date: string, note?: string) => void
+  onDeleteExpense: (expenseId: string, categoryId: string, amount: number) => void
+  onUpdateBudget: (categoryId: string, newLimit: number) => void
+  onDeleteCategory: (categoryId: string) => void
+  onUpdateCategoryDetails: (categoryId: string, updates: { name?: string; emoji?: string; color?: string }) => void
+  onOpenAddExpenseModal: (categoryId: string) => void
+}
+
+function CategoryHistoryDrawer({ 
+  category,
+  localExpenses,
+  isDevMode,
+  onClose, 
+  onAddExpense, 
+  onDeleteExpense, 
+  onUpdateBudget,
+  onDeleteCategory,
+  onUpdateCategoryDetails,
+  onOpenAddExpenseModal,
+}: CategoryHistoryDrawerProps) {
+  const [expenses, setExpenses] = useState<BudgetExpense[]>([])
+  const [loading, setLoading] = useState(true)
+  const [showEditModal, setShowEditModal] = useState(false)
+  const [editingBudget, setEditingBudget] = useState(false)
+  const [newBudget, setNewBudget] = useState(String(category.limit_amount))
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+
+  // Load expenses
+  useEffect(() => {
+    async function load() {
+      // Dev mode: use local expenses
+      if (isDevMode) {
+        const categoryExpenses = localExpenses
+          .filter(e => e.category_id === category.id)
+          .sort((a, b) => new Date(b.occurred_at).getTime() - new Date(a.occurred_at).getTime())
+        setExpenses(categoryExpenses)
+        setLoading(false)
+        return
+      }
+      
+      setLoading(true)
+      const { data, error } = await getCategoryExpenses(category.id)
+      if (error) {
+        console.error('Error loading expenses:', error)
+      } else if (data) {
+        setExpenses(data)
+      }
+      setLoading(false)
+    }
+    load()
+  }, [category.id, isDevMode, localExpenses])
+
+  const handleDelete = async (exp: BudgetExpense) => {
+    setDeletingId(exp.id)
+    await onDeleteExpense(exp.id, exp.category_id, exp.amount)
+    setExpenses(prev => prev.filter(e => e.id !== exp.id))
+    setDeletingId(null)
+  }
+
+  const handleSaveBudget = () => {
+    const value = parseFloat(newBudget)
+    if (!isNaN(value) && value >= 0) {
+      onUpdateBudget(category.id, value)
+    }
+    setEditingBudget(false)
+  }
+
+  const handleDeleteCategory = () => {
+    if (confirmDelete) {
+      onDeleteCategory(category.id)
+    } else {
+      setConfirmDelete(true)
+    }
+  }
+
+  const left = category.limit_amount - category.spent
+  const over = category.spent > category.limit_amount
+  const catColor = category.color || '#64748b'
+
+  return (
+    <>
+      <div className="budget-drawer-overlay" onClick={onClose} />
+      <div className="budget-drawer">
+        {/* Header */}
+        <div className="budget-drawer-header">
+          <div className="budget-drawer-title-row">
+            <span className="budget-drawer-emoji" style={{ background: catColor + '33' }}>{category.emoji}</span>
+            <h2>{category.name}</h2>
+          </div>
+          <div className="budget-drawer-header-actions">
+            <button 
+              className="budget-drawer-edit-btn"
+              onClick={() => setShowEditModal(true)}
+              title="Edit category"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+              </svg>
+            </button>
+            <button className="budget-modal-close" onClick={onClose}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        {/* Summary */}
+        <div className="budget-drawer-summary">
+          <div className="budget-drawer-stat">
+            <span className="budget-drawer-stat-label">Budget</span>
+            {editingBudget ? (
+              <div className="budget-drawer-stat-edit">
+                <input
+                  type="number"
+                  value={newBudget}
+                  onChange={e => setNewBudget(e.target.value)}
+                  className="budget-input"
+                  autoFocus
+                  onBlur={handleSaveBudget}
+                  onKeyDown={e => e.key === 'Enter' && handleSaveBudget()}
+                />
+              </div>
+            ) : (
+              <span 
+                className="budget-drawer-stat-value clickable" 
+                onClick={() => setEditingBudget(true)}
+              >
+                {formatCurrency(category.limit_amount)}
+              </span>
+            )}
+          </div>
+          <div className="budget-drawer-stat">
+            <span className="budget-drawer-stat-label">Spent</span>
+            <span className={`budget-drawer-stat-value ${over ? 'over' : ''}`}>
+              {formatCurrency(category.spent)}
+            </span>
+          </div>
+          <div className="budget-drawer-stat">
+            <span className="budget-drawer-stat-label">{over ? 'Over' : 'Left'}</span>
+            <span className={`budget-drawer-stat-value ${over ? 'over' : 'positive'}`}>
+              {formatCurrency(Math.abs(left))}
+            </span>
+          </div>
+        </div>
+
+        {/* Progress */}
+        <div className="budget-drawer-progress">
+          <div
+            className="budget-drawer-progress-fill"
+            style={{
+              width: `${category.limit_amount > 0 ? Math.min(100, (category.spent / category.limit_amount) * 100) : 0}%`,
+              background: over
+                ? 'linear-gradient(90deg, #f87171, #ef4444)'
+                : `linear-gradient(90deg, ${catColor}, ${catColor}dd)`,
+            }}
+          />
+        </div>
+
+        {/* Add Button */}
+        <button 
+          className="budget-drawer-add-btn"
+          onClick={() => onOpenAddExpenseModal(category.id)}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
+          Add expense to {category.name}
+        </button>
+
+        {/* Expenses List */}
+        <div className="budget-drawer-list-title">
+          Transactions ({expenses.length})
+        </div>
+        
+        <div className="budget-drawer-list">
+          {loading ? (
+            <div className="budget-drawer-loading">
+              <div className="budget-spinner-small" />
+              Loading expenses...
+            </div>
+          ) : expenses.length === 0 ? (
+            <div className="budget-drawer-empty">
+              No expenses yet in this category.
+            </div>
+          ) : (
+            expenses.map(exp => (
+              <div key={exp.id} className="budget-drawer-expense">
+                <div className="budget-drawer-expense-main">
+                  <div className="budget-drawer-expense-info">
+                    <span className="budget-drawer-expense-title">{exp.title}</span>
+                    {exp.note && <span className="budget-drawer-expense-note">{exp.note}</span>}
+                    <span className="budget-drawer-expense-date">{formatDateTime(exp.occurred_at)}</span>
+                  </div>
+                  <span className="budget-drawer-expense-amount">{formatCurrency(exp.amount)}</span>
+                </div>
+                <button
+                  className="budget-drawer-expense-delete"
+                  onClick={() => handleDelete(exp)}
+                  disabled={deletingId === exp.id}
+                >
+                  {deletingId === exp.id ? (
+                    <div className="budget-spinner-tiny" />
+                  ) : (
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                    </svg>
+                  )}
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Delete Category */}
+        <div className="budget-drawer-danger-zone">
+          <button 
+            className={`budget-drawer-delete-category ${confirmDelete ? 'confirm' : ''}`}
+            onClick={handleDeleteCategory}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+            </svg>
+            {confirmDelete ? 'Click again to confirm' : 'Delete category'}
+          </button>
+          {confirmDelete && (
+            <button 
+              className="budget-drawer-cancel-delete"
+              onClick={() => setConfirmDelete(false)}
+            >
+              Cancel
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Edit Category Modal */}
+      {showEditModal && (
+        <EditCategoryModal
+          category={category}
+          onClose={() => setShowEditModal(false)}
+          onSave={(updates) => {
+            onUpdateCategoryDetails(category.id, updates)
+            setShowEditModal(false)
+          }}
+        />
+      )}
+    </>
+  )
+}
+
+// ============ Edit Category Modal ============
+interface EditCategoryModalProps {
+  category: BudgetCategory
+  onClose: () => void
+  onSave: (updates: { name?: string; emoji?: string; color?: string }) => void
 }
 
 function EditCategoryModal({ category, onClose, onSave }: EditCategoryModalProps) {
-  const [amount, setAmount] = useState(String(category.amount))
+  const [name, setName] = useState(category.name)
+  const [emoji, setEmoji] = useState(category.emoji)
+  const [color, setColor] = useState(category.color || COLOR_OPTIONS[0])
   const [error, setError] = useState('')
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
-    const amountNum = parseFloat(amount)
-    if (isNaN(amountNum) || amountNum < 0) { setError('Enter a valid amount'); return }
-    onSave(category.id, amountNum)
-    onClose()
+    
+    if (!name.trim()) { setError('Enter a category name'); return }
+    
+    onSave({ name: name.trim(), emoji, color })
   }
 
   return (
     <div className="budget-modal-overlay" onClick={onClose}>
-      <div className="budget-modal" onClick={(e) => e.stopPropagation()}>
+      <div className="budget-modal" onClick={e => e.stopPropagation()}>
         <div className="budget-modal-header">
-          <h2>Edit {category.emoji} {category.name}</h2>
-          <button type="button" className="budget-modal-close" onClick={onClose}>
+          <h2>Edit Category</h2>
+          <button className="budget-modal-close" onClick={onClose}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
             </svg>
           </button>
         </div>
+        
         <form onSubmit={handleSubmit}>
           {error && <div className="budget-modal-error">{error}</div>}
+          
           <div className="budget-form-group">
-            <label>Monthly budget ($)</label>
-            <input type="number" placeholder="0" step="10" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} className="budget-input" autoFocus />
+            <label>Category Name</label>
+            <input
+              type="text"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              className="budget-input"
+              autoFocus
+            />
           </div>
-          <button type="submit" className="budget-submit-btn">Save</button>
+          
+          <div className="budget-form-group">
+            <label>Icon</label>
+            <div className="budget-emoji-picker">
+              {EMOJI_OPTIONS.map(e => (
+                <button
+                  key={e}
+                  type="button"
+                  className={`budget-emoji-btn ${emoji === e ? 'selected' : ''}`}
+                  onClick={() => setEmoji(e)}
+                >
+                  {e}
+                </button>
+              ))}
+            </div>
+          </div>
+          
+          <div className="budget-form-group">
+            <label>Color</label>
+            <div className="budget-color-picker">
+              {COLOR_OPTIONS.map(c => (
+                <button
+                  key={c}
+                  type="button"
+                  className={`budget-color-btn ${color === c ? 'selected' : ''}`}
+                  style={{ background: c }}
+                  onClick={() => setColor(c)}
+                />
+              ))}
+            </div>
+          </div>
+          
+          <button type="submit" className="budget-submit-btn">Save Changes</button>
         </form>
       </div>
     </div>
   )
 }
+
+// ============ Styles ============
+const styles = `
+  .budget-page {
+    min-height: 100vh;
+    padding-bottom: 40px;
+    background: linear-gradient(180deg, #050d18 0%, #0a1628 15%, #142136 35%, #1a2d4a 50%, #142136 65%, #0a1628 85%, #050d18 100%);
+    color: #e2e8f0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+
+  /* Loading */
+  .budget-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    gap: 16px;
+    color: #64748b;
+  }
+  .budget-spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid rgba(255,255,255,0.1);
+    border-top-color: #3b82f6;
+    border-radius: 50%;
+    animation: budget-spin 0.8s linear infinite;
+  }
+  .budget-spinner-small {
+    width: 20px;
+    height: 20px;
+    border: 2px solid rgba(255,255,255,0.1);
+    border-top-color: #3b82f6;
+    border-radius: 50%;
+    animation: budget-spin 0.8s linear infinite;
+  }
+  .budget-spinner-tiny {
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255,255,255,0.2);
+    border-top-color: #f87171;
+    border-radius: 50%;
+    animation: budget-spin 0.8s linear infinite;
+  }
+  @keyframes budget-spin { to { transform: rotate(360deg); } }
+  .budget-loading-inline {
+    text-align: center;
+    padding: 24px;
+    color: #64748b;
+  }
+  .budget-pie-loading {
+    height: 360px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Toast */
+  .budget-toast {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 12px 24px;
+    border-radius: 12px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    z-index: 1000;
+    animation: budget-toast-in 0.3s ease-out;
+  }
+  .budget-toast.success {
+    background: linear-gradient(135deg, #10b981, #059669);
+    color: white;
+  }
+  .budget-toast.error {
+    background: linear-gradient(135deg, #ef4444, #dc2626);
+    color: white;
+  }
+  @keyframes budget-toast-in {
+    from { opacity: 0; transform: translateX(-50%) translateY(-20px); }
+    to { opacity: 1; transform: translateX(-50%) translateY(0); }
+  }
+
+  /* Header */
+  .budget-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    background: rgba(255,255,255,0.04);
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+  }
+  .budget-header-left { display: flex; align-items: center; gap: 12px; }
+  .budget-back-btn {
+    display: flex; align-items: center; justify-content: center;
+    width: 40px; height: 40px; border-radius: 12px;
+    background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08);
+    color: #94a3b8; text-decoration: none;
+  }
+  .budget-back-btn:hover { background: rgba(255,255,255,0.1); color: #e2e8f0; }
+  .budget-header-title { font-size: 1.25rem; font-weight: 600; color: #f1f5f9; margin: 0; }
+  .budget-header-subtitle { font-size: 0.75rem; color: #64748b; margin: 0; }
+  .budget-header-avatar {
+    width: 40px; height: 40px; border-radius: 50%;
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.875rem; font-weight: 600; color: #fff;
+  }
+
+  /* Section */
+  .budget-section { padding: 20px; }
+  .budget-total-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+  }
+  .budget-total-label { font-size: 0.875rem; color: #94a3b8; }
+  .budget-total-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #60a5fa;
+    cursor: pointer;
+  }
+  .budget-total-edit {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 8px;
+    color: #e2e8f0;
+    font-size: 1.25rem;
+    font-weight: 600;
+    padding: 8px 12px;
+    width: 120px;
+    text-align: right;
+  }
+  .budget-total-edit:focus { outline: none; border-color: #3b82f6; }
+
+  /* Pie Chart */
+  .budget-pie-container {
+    position: relative;
+    width: 100%;
+    max-width: 360px;
+    height: 360px;
+    margin: 0 auto 16px;
+  }
+  .budget-pie-center {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    pointer-events: none;
+  }
+  .budget-pie-center-label { font-size: 0.75rem; color: #64748b; }
+  .budget-pie-center-amount { font-size: 1.75rem; font-weight: 700; color: #f1f5f9; }
+  .budget-pie-center-sub { font-size: 0.75rem; color: #94a3b8; margin-top: 2px; }
+
+  /* Add Button */
+  .budget-add-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 12px 24px;
+    border-radius: 20px;
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    border: none;
+    color: #fff;
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: 0 4px 14px rgba(59, 130, 246, 0.3);
+    margin: 0 auto 20px;
+  }
+  .budget-add-btn:hover { filter: brightness(1.1); }
+
+  /* Legend */
+  .budget-pie-legend {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 12px 20px;
+    margin-bottom: 24px;
+  }
+  .budget-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.8125rem;
+    color: #cbd5e1;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 8px;
+    transition: background 0.15s;
+  }
+  .budget-legend-item:hover { background: rgba(255,255,255,0.06); }
+  .budget-legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+  .budget-legend-name { font-weight: 500; }
+  .budget-legend-amount { color: #94a3b8; }
+
+  /* View Toggle */
+  .budget-view-toggle {
+    display: flex;
+    background: rgba(255,255,255,0.06);
+    border-radius: 12px;
+    padding: 4px;
+    margin-bottom: 20px;
+  }
+  .budget-view-toggle-btn {
+    flex: 1;
+    padding: 10px 16px;
+    border-radius: 10px;
+    border: none;
+    background: transparent;
+    color: #94a3b8;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .budget-view-toggle-btn:hover {
+    color: #cbd5e1;
+  }
+  .budget-view-toggle-btn.active {
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.25);
+  }
+
+  /* Week Navigation */
+  .budget-week-nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+    padding: 12px 16px;
+    background: rgba(255,255,255,0.04);
+    border-radius: 12px;
+  }
+  .budget-week-nav-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.08);
+    color: #94a3b8;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+  }
+  .budget-week-nav-btn:hover:not(:disabled) {
+    background: rgba(255,255,255,0.1);
+    color: #e2e8f0;
+  }
+  .budget-week-nav-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
+  .budget-week-label {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #e2e8f0;
+  }
+
+  /* Weekly Expense Items */
+  .budget-week-empty {
+    text-align: center;
+    padding: 16px;
+    color: #64748b;
+    font-size: 0.8125rem;
+    font-style: italic;
+  }
+  .budget-week-expense {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 0;
+    border-top: 1px solid rgba(255,255,255,0.06);
+  }
+  .budget-week-expense:first-of-type {
+    margin-top: 12px;
+  }
+  .budget-week-expense-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .budget-week-expense-title {
+    font-size: 0.9375rem;
+    color: #cbd5e1;
+    font-weight: 500;
+  }
+  .budget-week-expense-date {
+    font-size: 0.6875rem;
+    color: #64748b;
+  }
+  .budget-week-expense-amount {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: #e2e8f0;
+  }
+
+  /* Categories Header */
+  .budget-categories-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .budget-categories-header .budget-categories-title {
+    margin-bottom: 0;
+  }
+  .budget-categories-actions {
+    display: flex;
+    gap: 8px;
+  }
+  .budget-categories-title {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 12px;
+  }
+  .budget-manage-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 10px;
+    color: #94a3b8;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .budget-manage-btn:hover {
+    background: rgba(255,255,255,0.1);
+    color: #e2e8f0;
+  }
+
+  /* Manage Budget Modal */
+  .budget-manage-total {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    background: rgba(59, 130, 246, 0.1);
+    border-radius: 10px;
+    margin-bottom: 16px;
+    font-size: 0.875rem;
+    color: #94a3b8;
+  }
+  .budget-manage-total-amount {
+    font-weight: 700;
+    font-size: 1.125rem;
+    color: #60a5fa;
+  }
+  .budget-manage-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 20px;
+    max-height: 400px;
+    overflow-y: auto;
+  }
+  .budget-manage-empty {
+    text-align: center;
+    padding: 24px;
+    color: #64748b;
+    font-size: 0.875rem;
+  }
+  .budget-manage-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 14px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 12px;
+  }
+  .budget-manage-item-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .budget-manage-item-emoji {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.125rem;
+  }
+  .budget-manage-item-name {
+    font-weight: 500;
+    color: #e2e8f0;
+  }
+  .budget-manage-item-input {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .budget-manage-currency {
+    color: #64748b;
+    font-size: 0.875rem;
+  }
+  .budget-manage-input {
+    width: 100px;
+    text-align: right;
+    padding: 8px 12px !important;
+  }
+
+  /* Category Card */
+  .budget-category-card {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 16px;
+    padding: 16px;
+    margin-bottom: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .budget-category-card:hover {
+    background: rgba(255,255,255,0.06);
+    border-color: rgba(255,255,255,0.12);
+  }
+  .budget-category-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .budget-category-left { display: flex; align-items: center; gap: 12px; }
+  .budget-category-icon {
+    width: 44px; height: 44px; border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.25rem;
+  }
+  .budget-category-name { font-weight: 600; font-size: 1rem; color: #e2e8f0; }
+  .budget-category-budget { font-size: 0.75rem; color: #64748b; }
+  .budget-category-right { text-align: right; }
+  .budget-category-spent { font-weight: 700; font-size: 1.125rem; color: #e2e8f0; }
+  .budget-category-left-amount { font-size: 0.75rem; color: #64748b; }
+  .budget-category-left-amount.over { color: #f87171; }
+  .budget-category-progress {
+    height: 8px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .budget-category-progress-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.3s ease;
+  }
+
+  /* Modal */
+  .budget-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.7);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    z-index: 200;
+  }
+  .budget-modal {
+    background: linear-gradient(180deg, #0d1a2d 0%, #0a1628 100%);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 20px 20px 0 0;
+    width: 100%;
+    max-width: 480px;
+    max-height: 90vh;
+    overflow-y: auto;
+    padding: 24px;
+  }
+  @media (min-width: 640px) {
+    .budget-modal-overlay { align-items: center; }
+    .budget-modal { border-radius: 20px; }
+  }
+  .budget-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+  }
+  .budget-modal-header h2 { font-size: 1.25rem; font-weight: 600; color: #f1f5f9; margin: 0; }
+  .budget-modal-close {
+    width: 40px; height: 40px; border-radius: 12px;
+    background: rgba(255,255,255,0.06); border: none;
+    color: #94a3b8; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .budget-modal-close:hover { background: rgba(255,255,255,0.1); color: #e2e8f0; }
+  .budget-modal-error {
+    padding: 12px 16px;
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 10px;
+    color: #f87171;
+    font-size: 0.875rem;
+    margin-bottom: 16px;
+  }
+  .budget-form-group { margin-bottom: 16px; }
+  .budget-form-group label {
+    display: block;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: #94a3b8;
+    margin-bottom: 6px;
+  }
+  .budget-input, .budget-select {
+    width: 100%;
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.12);
+    background: rgba(255,255,255,0.04);
+    color: #e2e8f0;
+    font-size: 1rem;
+  }
+  .budget-input:focus, .budget-select:focus {
+    outline: none;
+    border-color: #3b82f6;
+    background: rgba(59, 130, 246, 0.05);
+  }
+  .budget-input::placeholder { color: #475569; }
+  .budget-select { cursor: pointer; }
+  .budget-select option { background: #0d1a2d; color: #e2e8f0; }
+  .budget-submit-btn {
+    width: 100%;
+    padding: 14px;
+    border-radius: 12px;
+    border: none;
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    color: #fff;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 8px;
+  }
+  .budget-submit-btn:hover { filter: brightness(1.1); }
+
+  /* Drawer */
+  .budget-drawer-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    backdrop-filter: blur(4px);
+    z-index: 200;
+  }
+  .budget-drawer {
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: 100%;
+    max-width: 420px;
+    height: 100%;
+    background: linear-gradient(180deg, #0d1a2d 0%, #0a1628 100%);
+    border-left: 1px solid rgba(255,255,255,0.08);
+    z-index: 201;
+    overflow-y: auto;
+    animation: budget-drawer-in 0.25s ease-out;
+  }
+  @keyframes budget-drawer-in {
+    from { transform: translateX(100%); }
+    to { transform: translateX(0); }
+  }
+  .budget-drawer-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 24px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    position: sticky;
+    top: 0;
+    background: rgba(13, 26, 45, 0.95);
+    backdrop-filter: blur(10px);
+    z-index: 10;
+  }
+  .budget-drawer-title-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .budget-drawer-emoji {
+    width: 40px;
+    height: 40px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.25rem;
+  }
+  .budget-drawer-header h2 { font-size: 1.125rem; font-weight: 600; color: #f1f5f9; margin: 0; }
+
+  /* Drawer Summary */
+  .budget-drawer-summary {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    padding: 20px 24px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+  }
+  .budget-drawer-stat { text-align: center; }
+  .budget-drawer-stat-label {
+    display: block;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 4px;
+  }
+  .budget-drawer-stat-value {
+    font-size: 1.125rem;
+    font-weight: 700;
+    color: #e2e8f0;
+  }
+  .budget-drawer-stat-value.over { color: #f87171; }
+  .budget-drawer-stat-value.positive { color: #34d399; }
+  .budget-drawer-stat-value.clickable {
+    cursor: pointer;
+    text-decoration: underline;
+    text-decoration-style: dashed;
+    text-underline-offset: 3px;
+  }
+  .budget-drawer-stat-edit input {
+    width: 80px;
+    text-align: center;
+    font-size: 1rem;
+    padding: 6px 8px;
+  }
+
+  /* Drawer Progress */
+  .budget-drawer-progress {
+    height: 6px;
+    background: rgba(255,255,255,0.1);
+    margin: 0 24px;
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .budget-drawer-progress-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.3s;
+  }
+
+  /* Drawer Add Button */
+  .budget-drawer-add-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: calc(100% - 48px);
+    margin: 20px 24px;
+    padding: 12px 20px;
+    background: rgba(59, 130, 246, 0.1);
+    border: 1px dashed rgba(59, 130, 246, 0.3);
+    border-radius: 12px;
+    color: #60a5fa;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .budget-drawer-add-btn:hover {
+    background: rgba(59, 130, 246, 0.15);
+    border-color: rgba(59, 130, 246, 0.5);
+  }
+
+  /* Drawer List */
+  .budget-drawer-list-title {
+    padding: 0 24px 12px;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .budget-drawer-list {
+    padding: 0 24px 24px;
+  }
+  .budget-drawer-loading, .budget-drawer-empty {
+    text-align: center;
+    padding: 24px;
+    color: #64748b;
+    font-size: 0.875rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+  }
+  .budget-drawer-expense {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 12px;
+    margin-bottom: 8px;
+  }
+  .budget-drawer-expense-main {
+    flex: 1;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    min-width: 0;
+  }
+  .budget-drawer-expense-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  .budget-drawer-expense-title {
+    font-weight: 500;
+    color: #e2e8f0;
+    font-size: 0.9375rem;
+  }
+  .budget-drawer-expense-note {
+    font-size: 0.75rem;
+    color: #94a3b8;
+    font-style: italic;
+  }
+  .budget-drawer-expense-date {
+    font-size: 0.6875rem;
+    color: #64748b;
+  }
+  .budget-drawer-expense-amount {
+    font-weight: 600;
+    color: #e2e8f0;
+    font-size: 1rem;
+    white-space: nowrap;
+  }
+  .budget-drawer-expense-delete {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    background: rgba(239, 68, 68, 0.1);
+    border: none;
+    border-radius: 8px;
+    color: #f87171;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: all 0.2s;
+  }
+  .budget-drawer-expense-delete:hover {
+    background: rgba(239, 68, 68, 0.2);
+  }
+  .budget-drawer-expense-delete:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* Custom tooltip for recharts */
+  .recharts-tooltip-wrapper { outline: none; }
+  .custom-tooltip {
+    background: rgba(15, 23, 42, 0.95);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 10px;
+    padding: 10px 14px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  }
+  .custom-tooltip-name { font-weight: 600; color: #f1f5f9; font-size: 0.875rem; }
+  .custom-tooltip-value { color: #94a3b8; font-size: 0.8125rem; margin-top: 2px; }
+
+  /* Categories Header */
+  .budget-categories-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .budget-categories-header .budget-categories-title {
+    margin-bottom: 0;
+  }
+  .budget-new-category-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    background: rgba(59, 130, 246, 0.1);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: 10px;
+    color: #60a5fa;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .budget-new-category-btn:hover {
+    background: rgba(59, 130, 246, 0.15);
+    border-color: rgba(59, 130, 246, 0.5);
+  }
+
+  /* Empty State */
+  .budget-empty-categories {
+    text-align: center;
+    padding: 48px 24px;
+    background: rgba(255,255,255,0.02);
+    border: 1px dashed rgba(255,255,255,0.1);
+    border-radius: 16px;
+  }
+  .budget-empty-icon {
+    font-size: 48px;
+    margin-bottom: 16px;
+  }
+  .budget-empty-categories h3 {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: #e2e8f0;
+    margin: 0 0 8px 0;
+  }
+  .budget-empty-categories p {
+    font-size: 0.875rem;
+    color: #64748b;
+    margin: 0 0 24px 0;
+  }
+  .budget-empty-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 24px;
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    border: none;
+    border-radius: 12px;
+    color: white;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: 0 4px 14px rgba(59, 130, 246, 0.3);
+  }
+  .budget-empty-btn:hover {
+    filter: brightness(1.1);
+  }
+
+  /* Emoji Picker */
+  .budget-emoji-picker {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .budget-emoji-btn {
+    width: 44px;
+    height: 44px;
+    background: rgba(255,255,255,0.04);
+    border: 2px solid transparent;
+    border-radius: 10px;
+    font-size: 1.25rem;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .budget-emoji-btn:hover {
+    background: rgba(255,255,255,0.08);
+  }
+  .budget-emoji-btn.selected {
+    border-color: #3b82f6;
+    background: rgba(59, 130, 246, 0.1);
+  }
+
+  /* Color Picker */
+  .budget-color-picker {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .budget-color-btn {
+    width: 36px;
+    height: 36px;
+    border: 2px solid transparent;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .budget-color-btn:hover {
+    transform: scale(1.1);
+  }
+  .budget-color-btn.selected {
+    border-color: white;
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.5);
+  }
+
+  /* Drawer Header Actions */
+  .budget-drawer-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .budget-drawer-edit-btn {
+    width: 36px;
+    height: 36px;
+    background: rgba(255,255,255,0.06);
+    border: none;
+    border-radius: 10px;
+    color: #94a3b8;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+  }
+  .budget-drawer-edit-btn:hover {
+    background: rgba(255,255,255,0.1);
+    color: #e2e8f0;
+  }
+
+  /* Danger Zone */
+  .budget-drawer-danger-zone {
+    padding: 20px 24px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .budget-drawer-delete-category {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    padding: 12px 16px;
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    border-radius: 10px;
+    color: #f87171;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .budget-drawer-delete-category:hover {
+    background: rgba(239, 68, 68, 0.12);
+    border-color: rgba(239, 68, 68, 0.3);
+  }
+  .budget-drawer-delete-category.confirm {
+    background: rgba(239, 68, 68, 0.2);
+    border-color: rgba(239, 68, 68, 0.4);
+  }
+  .budget-drawer-cancel-delete {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    padding: 10px 16px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 10px;
+    color: #94a3b8;
+    font-size: 0.8125rem;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .budget-drawer-cancel-delete:hover {
+    background: rgba(255,255,255,0.08);
+    color: #e2e8f0;
+  }
+
+  /* Responsive */
+  @media (max-width: 480px) {
+    .budget-drawer { max-width: 100%; }
+  }
+`
