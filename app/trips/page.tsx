@@ -230,6 +230,7 @@ export default function TripsPage() {
   const [showAddFriendModal, setShowAddFriendModal] = useState(false)
   const [showCreateGroupModal, setShowCreateGroupModal] = useState(false)
   const [expandedGroup, setExpandedGroup] = useState<string | null>(null)
+  const [groupDetailTab, setGroupDetailTab] = useState<'members' | 'activity'>('members')
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
 
   // Show toast helper
@@ -733,67 +734,167 @@ export default function TripsPage() {
                       </svg>
                     </div>
                   </div>
-                  {isExpanded && (
-                    <div className="trips-group-members-list">
-                      <div className="trips-group-members-header">Members</div>
-                      {group.members.map(member => (
-                        <div key={member.user_id} className="trips-group-member">
-                          <div 
-                            className="trips-group-member-avatar" 
-                            style={{ background: getAvatarColor(member.user_id) }}
+                  {isExpanded && (() => {
+                    const groupExpenses = expenses.filter(e => e.group_id === group.id)
+                    return (
+                      <div className="trips-group-detail-panel">
+                        {/* Group Detail Tabs */}
+                        <div className="trips-group-detail-tabs">
+                          <button
+                            className={`trips-group-detail-tab ${groupDetailTab === 'members' ? 'active' : ''}`}
+                            onClick={(e) => { e.stopPropagation(); setGroupDetailTab('members') }}
                           >
-                            {getInitials(member.profile.full_name)}
-                          </div>
-                          <span className="trips-group-member-name">
-                            {member.user_id === user.user_id ? 'You' : member.profile.full_name || member.profile.email.split('@')[0]}
-                          </span>
-                          {member.role === 'owner' && <span className="trips-group-member-badge">Owner</span>}
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                              <circle cx="9" cy="7" r="4"/>
+                            </svg>
+                            Members ({group.members.length})
+                          </button>
+                          <button
+                            className={`trips-group-detail-tab ${groupDetailTab === 'activity' ? 'active' : ''}`}
+                            onClick={(e) => { e.stopPropagation(); setGroupDetailTab('activity') }}
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                            </svg>
+                            Activity ({groupExpenses.length})
+                          </button>
                         </div>
-                      ))}
-                      
-                      {/* Add member dropdown */}
-                      {group.owner_id === user.user_id && availableFriends.length > 0 && (
-                        <div className="trips-add-member-section">
-                          <div className="trips-add-member-label">Add member:</div>
-                          <div className="trips-add-member-list">
-                            {availableFriends.map(friend => (
-                              <button
-                                key={friend.user_id}
-                                className="trips-add-member-btn"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  handleAddMemberToGroup(group.id, friend.user_id)
-                                }}
-                              >
-                                <div className="trips-add-member-avatar" style={{ background: getAvatarColor(friend.user_id) }}>
-                                  {getInitials(friend.full_name)}
-                                </div>
-                                <span>{friend.full_name}</span>
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                  <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-                                </svg>
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      )}
 
-                      <button 
-                        className="trips-invite-btn"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setShowAddFriendModal(true)
-                        }}
-                      >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
-                          <circle cx="8.5" cy="7" r="4"/>
-                          <line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/>
-                        </svg>
-                        Invite New Person
-                      </button>
-                    </div>
-                  )}
+                        {/* Members Tab Content */}
+                        {groupDetailTab === 'members' && (
+                          <div className="trips-group-members-content">
+                            {group.members.map(member => (
+                              <div key={member.user_id} className="trips-group-member">
+                                <div 
+                                  className="trips-group-member-avatar" 
+                                  style={{ background: getAvatarColor(member.user_id) }}
+                                >
+                                  {getInitials(member.profile.full_name)}
+                                </div>
+                                <span className="trips-group-member-name">
+                                  {member.user_id === user.user_id ? 'You' : member.profile.full_name || member.profile.email.split('@')[0]}
+                                </span>
+                                {member.role === 'owner' && <span className="trips-group-member-badge">Owner</span>}
+                              </div>
+                            ))}
+                            
+                            {/* Add member dropdown */}
+                            {group.owner_id === user.user_id && availableFriends.length > 0 && (
+                              <div className="trips-add-member-section">
+                                <div className="trips-add-member-label">Add member:</div>
+                                <div className="trips-add-member-list">
+                                  {availableFriends.map(friend => (
+                                    <button
+                                      key={friend.user_id}
+                                      className="trips-add-member-btn"
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        handleAddMemberToGroup(group.id, friend.user_id)
+                                      }}
+                                    >
+                                      <div className="trips-add-member-avatar" style={{ background: getAvatarColor(friend.user_id) }}>
+                                        {getInitials(friend.full_name)}
+                                      </div>
+                                      <span>{friend.full_name}</span>
+                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                        <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                                      </svg>
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            <button 
+                              className="trips-invite-btn"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setShowAddFriendModal(true)
+                              }}
+                            >
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                                <circle cx="8.5" cy="7" r="4"/>
+                                <line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/>
+                              </svg>
+                              Invite New Person
+                            </button>
+                          </div>
+                        )}
+
+                        {/* Activity Tab Content */}
+                        {groupDetailTab === 'activity' && (
+                          <div className="trips-group-activity-content">
+                            {groupExpenses.length === 0 ? (
+                              <div className="trips-group-empty">
+                                <p>No expenses in this group yet</p>
+                                <button 
+                                  className="trips-group-add-expense-btn"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setShowAddModal(true)
+                                  }}
+                                >
+                                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                    <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                                  </svg>
+                                  Add First Expense
+                                </button>
+                              </div>
+                            ) : (
+                              <>
+                                {groupExpenses.map(expense => {
+                                  const isPayer = expense.paid_by === user.user_id
+                                  const myShare = expense.splits.find(s => s.user_id === user.user_id)?.share || 0
+                                  
+                                  return (
+                                    <div key={expense.id} className="trips-group-expense-item">
+                                      <div className="trips-group-expense-icon" style={{ background: isPayer ? '#3b82f6' : '#374151' }}>
+                                        {isPayer ? '💰' : '📝'}
+                                      </div>
+                                      <div className="trips-group-expense-info">
+                                        <div className="trips-group-expense-header">
+                                          <span className="trips-group-expense-desc">{expense.description}</span>
+                                          <span className="trips-group-expense-amount">{formatCurrency(expense.amount)}</span>
+                                        </div>
+                                        <div className="trips-group-expense-details">
+                                          <span className="trips-group-expense-payer">
+                                            {getName(expense.paid_by)} paid
+                                          </span>
+                                          <span className="trips-group-expense-date">{formatDate(expense.created_at)}</span>
+                                        </div>
+                                        <div className="trips-group-expense-split">
+                                          {!isPayer && myShare > 0 && (
+                                            <span className="trips-negative">You owe {formatCurrency(myShare)}</span>
+                                          )}
+                                          {isPayer && (
+                                            <span className="trips-positive">You get back {formatCurrency(expense.amount - myShare)}</span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )
+                                })}
+                                <button 
+                                  className="trips-group-add-expense-btn"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setShowAddModal(true)
+                                  }}
+                                >
+                                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                    <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                                  </svg>
+                                  Add Expense
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })()}
                 </div>
               )
             })}
@@ -1440,13 +1541,99 @@ const styles = `
   .trips-group-balance > span:first-child { font-weight: 600; font-size: 0.9375rem; }
   .trips-group-chevron { color: #64748b; transition: transform 0.2s; flex-shrink: 0; }
   .trips-group-chevron.expanded { transform: rotate(180deg); }
-  .trips-group-members-list {
+  .trips-group-detail-panel {
     background: rgba(59, 130, 246, 0.05);
     border: 1px solid rgba(59, 130, 246, 0.2);
     border-top: none;
     border-radius: 0 0 14px 14px;
-    padding: 12px 16px;
+    overflow: hidden;
   }
+  .trips-group-detail-tabs {
+    display: flex;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+  }
+  .trips-group-detail-tab {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 10px 8px;
+    background: none;
+    border: none;
+    color: #64748b;
+    font-size: 0.75rem;
+    font-weight: 500;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+  }
+  .trips-group-detail-tab:hover { color: #94a3b8; background: rgba(255,255,255,0.02); }
+  .trips-group-detail-tab.active { color: #60a5fa; border-bottom-color: #3b82f6; background: rgba(59, 130, 246, 0.05); }
+  .trips-group-detail-tab svg { opacity: 0.7; }
+  .trips-group-detail-tab.active svg { opacity: 1; }
+  .trips-group-members-content, .trips-group-activity-content { padding: 12px 16px; }
+  .trips-group-empty {
+    text-align: center;
+    padding: 20px;
+    color: #64748b;
+  }
+  .trips-group-empty p { margin: 0 0 12px 0; font-size: 0.875rem; }
+  .trips-group-add-expense-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    padding: 10px 16px;
+    margin-top: 12px;
+    background: rgba(59, 130, 246, 0.1);
+    border: 1px dashed rgba(59, 130, 246, 0.3);
+    border-radius: 10px;
+    color: #60a5fa;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .trips-group-add-expense-btn:hover {
+    background: rgba(59, 130, 246, 0.15);
+    border-color: rgba(59, 130, 246, 0.5);
+  }
+  .trips-group-expense-item {
+    display: flex;
+    gap: 12px;
+    padding: 12px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 10px;
+    margin-bottom: 8px;
+  }
+  .trips-group-expense-item:last-of-type { margin-bottom: 0; }
+  .trips-group-expense-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.875rem;
+    flex-shrink: 0;
+  }
+  .trips-group-expense-info { flex: 1; min-width: 0; }
+  .trips-group-expense-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+  .trips-group-expense-desc { font-weight: 500; color: #e2e8f0; font-size: 0.875rem; }
+  .trips-group-expense-amount { font-weight: 600; color: #60a5fa; font-size: 0.875rem; white-space: nowrap; }
+  .trips-group-expense-details { display: flex; gap: 8px; font-size: 0.7rem; color: #64748b; margin-bottom: 4px; }
+  .trips-group-expense-payer { color: #94a3b8; }
+  .trips-group-expense-date { color: #475569; }
+  .trips-group-expense-split { font-size: 0.75rem; font-weight: 500; }
   .trips-group-members-header {
     font-size: 0.7rem;
     font-weight: 600;
