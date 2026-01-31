@@ -212,9 +212,9 @@ const INITIAL_EXPENSES: Expense[] = [
 
 // ============ Main Component ============
 export default function TripsPage() {
-  // Fake auth state - always "logged in" with mock user
+  // Fake auth state - always "logged in" with mock user (skip sign-in screen for now)
   const [user] = useState(MOCK_USER)
-  const [isSignedIn, setIsSignedIn] = useState(false)
+  const [isSignedIn, setIsSignedIn] = useState(true)
   const [signingIn, setSigningIn] = useState(false)
   const [signInEmail, setSignInEmail] = useState('')
 
