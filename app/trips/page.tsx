@@ -1,21 +1,41 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import Link from 'next/link'
 
+// ============================================
+// STUB BACKEND - Works without Supabase
+// All data is stored in local state (memory)
+// Easy to swap for real API later
+// ============================================
+
 // ============ Types ============
-interface User {
-  id: string
-  name: string
-  email?: string
-  avatarUrl?: string
+interface Profile {
+  user_id: string
+  email: string
+  full_name: string | null
+  avatar_url: string | null
+}
+
+interface Friend extends Profile {
+  friendship_id: string
+  status: 'pending' | 'accepted'
+  pending?: boolean
+  invitedAt?: Date
 }
 
 interface Group {
   id: string
   name: string
-  memberIds: string[]
-  emoji?: string
+  emoji: string
+  owner_id: string
+  members: GroupMember[]
+}
+
+interface GroupMember {
+  user_id: string
+  role: 'owner' | 'member'
+  profile: Profile
 }
 
 interface Expense {
@@ -23,112 +43,30 @@ interface Expense {
   description: string
   amount: number
   currency: string
-  paidBy: string
-  splitBetween: string[]
-  splitMode: 'equal'
-  createdAt: Date
-  groupId?: string
+  paid_by: string
+  group_id: string | null
+  created_by: string
+  created_at: string
+  splits: ExpenseSplit[]
 }
 
-// ============ Mock Data ============
-const ME_ID = 'me'
+interface ExpenseSplit {
+  id: string
+  user_id: string
+  share: number
+}
 
-const MOCK_FRIENDS: User[] = [
-  { id: 'friend1', name: 'Sarah Chen', email: 'sarah@email.com', avatarUrl: '' },
-  { id: 'friend2', name: 'Marcus Johnson', email: 'marcus@email.com', avatarUrl: '' },
-  { id: 'friend3', name: 'Elena Rodriguez', email: 'elena@email.com', avatarUrl: '' },
-  { id: 'friend4', name: 'James Wilson', email: 'james@email.com', avatarUrl: '' },
-  { id: 'friend5', name: 'Priya Patel', email: 'priya@email.com', avatarUrl: '' },
-]
-
-const INITIAL_GROUPS: Group[] = [
-  { id: 'group1', name: 'Bali Trip 2026', memberIds: [ME_ID, 'friend1', 'friend2', 'friend3'], emoji: '🏝️' },
-  { id: 'group2', name: 'Roommates', memberIds: [ME_ID, 'friend4', 'friend5'], emoji: '🏠' },
-  { id: 'group3', name: 'Office Lunches', memberIds: [ME_ID, 'friend1', 'friend4'], emoji: '🍕' },
-]
-
-const INITIAL_EXPENSES: Expense[] = [
-  {
-    id: 'exp1',
-    description: 'Beach Resort Booking',
-    amount: 450.00,
-    currency: 'USD',
-    paidBy: ME_ID,
-    splitBetween: [ME_ID, 'friend1', 'friend2', 'friend3'],
-    splitMode: 'equal',
-    createdAt: new Date('2026-01-28T10:00:00'),
-    groupId: 'group1',
-  },
-  {
-    id: 'exp2',
-    description: 'Uber to Airport',
-    amount: 65.00,
-    currency: 'USD',
-    paidBy: 'friend1',
-    splitBetween: [ME_ID, 'friend1', 'friend2'],
-    splitMode: 'equal',
-    createdAt: new Date('2026-01-29T08:30:00'),
-    groupId: 'group1',
-  },
-  {
-    id: 'exp3',
-    description: 'Groceries',
-    amount: 124.50,
-    currency: 'USD',
-    paidBy: ME_ID,
-    splitBetween: [ME_ID, 'friend4', 'friend5'],
-    splitMode: 'equal',
-    createdAt: new Date('2026-01-30T14:00:00'),
-    groupId: 'group2',
-  },
-  {
-    id: 'exp4',
-    description: 'Pizza Friday',
-    amount: 48.00,
-    currency: 'USD',
-    paidBy: 'friend4',
-    splitBetween: [ME_ID, 'friend1', 'friend4'],
-    splitMode: 'equal',
-    createdAt: new Date('2026-01-30T12:30:00'),
-    groupId: 'group3',
-  },
-  {
-    id: 'exp5',
-    description: 'Netflix Subscription',
-    amount: 22.99,
-    currency: 'USD',
-    paidBy: 'friend5',
-    splitBetween: [ME_ID, 'friend4', 'friend5'],
-    splitMode: 'equal',
-    createdAt: new Date('2026-01-25T09:00:00'),
-    groupId: 'group2',
-  },
-  {
-    id: 'exp6',
-    description: 'Dinner at Sushi Place',
-    amount: 186.00,
-    currency: 'USD',
-    paidBy: ME_ID,
-    splitBetween: [ME_ID, 'friend2', 'friend3'],
-    splitMode: 'equal',
-    createdAt: new Date('2026-01-27T19:00:00'),
-  },
-  {
-    id: 'exp7',
-    description: 'Scooter Rental',
-    amount: 35.00,
-    currency: 'USD',
-    paidBy: 'friend2',
-    splitBetween: [ME_ID, 'friend2'],
-    splitMode: 'equal',
-    createdAt: new Date('2026-01-29T16:00:00'),
-    groupId: 'group1',
-  },
-]
+interface PendingInvite {
+  id: string
+  invited_email: string
+  group_id: string | null
+  status: string
+  created_at: string
+}
 
 // ============ Utility Functions ============
 function generateId(): string {
-  return 'exp' + Date.now() + Math.random().toString(36).substr(2, 9)
+  return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15)
 }
 
 function formatCurrency(amount: number): string {
@@ -138,7 +76,8 @@ function formatCurrency(amount: number): string {
   }).format(Math.abs(amount))
 }
 
-function formatDate(date: Date): string {
+function formatDate(dateStr: string | Date): string {
+  const date = new Date(dateStr)
   const now = new Date()
   const diffDays = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24))
   
@@ -149,7 +88,8 @@ function formatDate(date: Date): string {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
-function getInitials(name: string): string {
+function getInitials(name: string | null): string {
+  if (!name) return '?'
   return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
 }
 
@@ -162,70 +102,180 @@ function getAvatarColor(id: string): string {
   return colors[Math.abs(hash) % colors.length]
 }
 
+// ============================================
+// MOCK DATA - Initial seed data
+// ============================================
+const MOCK_USER: Profile = {
+  user_id: 'me-123',
+  email: 'you@budgieee.app',
+  full_name: 'You',
+  avatar_url: null,
+}
+
+const INITIAL_FRIENDS: Friend[] = [
+  {
+    user_id: 'friend-1',
+    email: 'alex@example.com',
+    full_name: 'Alex Chen',
+    avatar_url: null,
+    friendship_id: 'fs-1',
+    status: 'accepted',
+  },
+  {
+    user_id: 'friend-2',
+    email: 'sam@example.com',
+    full_name: 'Sam Wilson',
+    avatar_url: null,
+    friendship_id: 'fs-2',
+    status: 'accepted',
+  },
+  {
+    user_id: 'friend-3',
+    email: 'jordan@example.com',
+    full_name: 'Jordan Lee',
+    avatar_url: null,
+    friendship_id: 'fs-3',
+    status: 'accepted',
+  },
+]
+
+const INITIAL_GROUPS: Group[] = [
+  {
+    id: 'group-1',
+    name: 'Bali Trip 2026',
+    emoji: '🏝️',
+    owner_id: 'me-123',
+    members: [
+      { user_id: 'me-123', role: 'owner', profile: MOCK_USER },
+      { user_id: 'friend-1', role: 'member', profile: INITIAL_FRIENDS[0] },
+      { user_id: 'friend-2', role: 'member', profile: INITIAL_FRIENDS[1] },
+    ],
+  },
+  {
+    id: 'group-2',
+    name: 'Roommates',
+    emoji: '🏠',
+    owner_id: 'me-123',
+    members: [
+      { user_id: 'me-123', role: 'owner', profile: MOCK_USER },
+      { user_id: 'friend-3', role: 'member', profile: INITIAL_FRIENDS[2] },
+    ],
+  },
+]
+
+const INITIAL_EXPENSES: Expense[] = [
+  {
+    id: 'exp-1',
+    description: 'Dinner at Thai Place',
+    amount: 85.50,
+    currency: 'USD',
+    paid_by: 'me-123',
+    group_id: 'group-1',
+    created_by: 'me-123',
+    created_at: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+    splits: [
+      { id: 'sp-1', user_id: 'me-123', share: 28.50 },
+      { id: 'sp-2', user_id: 'friend-1', share: 28.50 },
+      { id: 'sp-3', user_id: 'friend-2', share: 28.50 },
+    ],
+  },
+  {
+    id: 'exp-2',
+    description: 'Uber to airport',
+    amount: 45.00,
+    currency: 'USD',
+    paid_by: 'friend-1',
+    group_id: 'group-1',
+    created_by: 'friend-1',
+    created_at: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
+    splits: [
+      { id: 'sp-4', user_id: 'me-123', share: 15.00 },
+      { id: 'sp-5', user_id: 'friend-1', share: 15.00 },
+      { id: 'sp-6', user_id: 'friend-2', share: 15.00 },
+    ],
+  },
+  {
+    id: 'exp-3',
+    description: 'Groceries',
+    amount: 120.00,
+    currency: 'USD',
+    paid_by: 'me-123',
+    group_id: 'group-2',
+    created_by: 'me-123',
+    created_at: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+    splits: [
+      { id: 'sp-7', user_id: 'me-123', share: 60.00 },
+      { id: 'sp-8', user_id: 'friend-3', share: 60.00 },
+    ],
+  },
+]
+
 // ============ Main Component ============
 export default function TripsPage() {
-  // DEV MODE: Skip auth, use mock user
-  const user = { email: 'dev@budgieee.app' }
-  const [expenses, setExpenses] = useState<Expense[]>(INITIAL_EXPENSES)
+  // Fake auth state - always "logged in" with mock user
+  const [user] = useState(MOCK_USER)
+  const [isSignedIn, setIsSignedIn] = useState(false)
+  const [signingIn, setSigningIn] = useState(false)
+  const [signInEmail, setSignInEmail] = useState('')
+
+  // Data state (local/in-memory)
+  const [friends, setFriends] = useState<Friend[]>(INITIAL_FRIENDS)
   const [groups, setGroups] = useState<Group[]>(INITIAL_GROUPS)
+  const [expenses, setExpenses] = useState<Expense[]>(INITIAL_EXPENSES)
+  const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([])
+
+  // UI state
   const [activeTab, setActiveTab] = useState<'friends' | 'groups' | 'activity'>('friends')
   const [showAddModal, setShowAddModal] = useState(false)
+  const [showAddFriendModal, setShowAddFriendModal] = useState(false)
+  const [showCreateGroupModal, setShowCreateGroupModal] = useState(false)
   const [expandedGroup, setExpandedGroup] = useState<string | null>(null)
-  const [showInviteModal, setShowInviteModal] = useState<string | null>(null)
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
 
-  // Add member to group
-  const handleAddMemberToGroup = (groupId: string, friendId: string) => {
-    setGroups(prev => prev.map(g => {
-      if (g.id === groupId && !g.memberIds.includes(friendId)) {
-        return { ...g, memberIds: [...g.memberIds, friendId] }
-      }
-      return g
-    }))
-    setShowInviteModal(null)
+  // Show toast helper
+  const showToast = useCallback((message: string, type: 'success' | 'error' = 'success') => {
+    setToast({ message, type })
+    setTimeout(() => setToast(null), 3000)
+  }, [])
+
+  // Fake sign in handler
+  const handleFakeSignIn = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!signInEmail.includes('@')) return
+    
+    setSigningIn(true)
+    // Simulate API delay
+    setTimeout(() => {
+      setIsSignedIn(true)
+      setSigningIn(false)
+      showToast('Signed in successfully!')
+    }, 800)
   }
 
-  // Remove member from group
-  const handleRemoveMemberFromGroup = (groupId: string, memberId: string) => {
-    if (memberId === ME_ID) return // Can't remove yourself
-    setGroups(prev => prev.map(g => {
-      if (g.id === groupId) {
-        return { ...g, memberIds: g.memberIds.filter(id => id !== memberId) }
-      }
-      return g
-    }))
-  }
-
-  // Calculate balances
+  // Calculate balances from expenses
   const balances = useMemo(() => {
     const friendBalances: Record<string, number> = {}
     
-    // Initialize all friends with 0 balance
-    MOCK_FRIENDS.forEach(f => {
-      friendBalances[f.id] = 0
+    friends.forEach(f => {
+      friendBalances[f.user_id] = 0
     })
 
     expenses.forEach(expense => {
-      const { paidBy, splitBetween, amount, splitMode } = expense
+      const payerId = expense.paid_by
       
-      if (splitMode === 'equal') {
-        const sharePerPerson = amount / splitBetween.length
+      expense.splits.forEach(split => {
+        if (split.user_id === payerId) return
 
-        splitBetween.forEach(personId => {
-          if (personId === paidBy) return // Payer doesn't owe themselves
-
-          if (paidBy === ME_ID && personId !== ME_ID) {
-            // I paid, friend owes me their share
-            friendBalances[personId] = (friendBalances[personId] || 0) + sharePerPerson
-          } else if (paidBy !== ME_ID && personId === ME_ID) {
-            // Friend paid, I owe them my share
-            friendBalances[paidBy] = (friendBalances[paidBy] || 0) - sharePerPerson
-          }
-        })
-      }
+        if (payerId === user.user_id && split.user_id !== user.user_id) {
+          friendBalances[split.user_id] = (friendBalances[split.user_id] || 0) + split.share
+        } else if (payerId !== user.user_id && split.user_id === user.user_id) {
+          friendBalances[payerId] = (friendBalances[payerId] || 0) - split.share
+        }
+      })
     })
 
     return friendBalances
-  }, [expenses])
+  }, [user, friends, expenses])
 
   // Aggregate totals
   const totals = useMemo(() => {
@@ -233,11 +283,8 @@ export default function TripsPage() {
     let owe = 0
 
     Object.values(balances).forEach(balance => {
-      if (balance > 0) {
-        owed += balance
-      } else if (balance < 0) {
-        owe += Math.abs(balance)
-      }
+      if (balance > 0) owed += balance
+      else if (balance < 0) owe += Math.abs(balance)
     })
 
     return { owed, owe }
@@ -246,63 +293,238 @@ export default function TripsPage() {
   // Group balances
   const groupBalances = useMemo(() => {
     const gBalances: Record<string, number> = {}
-    
-    groups.forEach(g => {
-      gBalances[g.id] = 0
-    })
+    groups.forEach(g => { gBalances[g.id] = 0 })
 
     expenses.forEach(expense => {
-      if (!expense.groupId) return
+      if (!expense.group_id) return
       
-      const { paidBy, splitBetween, amount, groupId } = expense
-      const sharePerPerson = amount / splitBetween.length
+      const payerId = expense.paid_by
+      const myShare = expense.splits.find(s => s.user_id === user.user_id)?.share || 0
 
-      if (paidBy === ME_ID) {
-        // I paid: I'm owed by everyone except me
-        const othersCount = splitBetween.filter(id => id !== ME_ID).length
-        gBalances[groupId] = (gBalances[groupId] || 0) + (sharePerPerson * othersCount)
-      } else if (splitBetween.includes(ME_ID)) {
-        // Someone else paid and I'm in the split: I owe my share
-        gBalances[groupId] = (gBalances[groupId] || 0) - sharePerPerson
+      if (payerId === user.user_id) {
+        const othersTotal = expense.splits
+          .filter(s => s.user_id !== user.user_id)
+          .reduce((sum, s) => sum + s.share, 0)
+        gBalances[expense.group_id] = (gBalances[expense.group_id] || 0) + othersTotal
+      } else if (myShare > 0) {
+        gBalances[expense.group_id] = (gBalances[expense.group_id] || 0) - myShare
       }
     })
 
     return gBalances
-  }, [expenses, groups])
+  }, [user, groups, expenses])
 
   // Sorted friends by absolute balance
   const sortedFriends = useMemo(() => {
-    return [...MOCK_FRIENDS].sort((a, b) => {
-      return Math.abs(balances[b.id] || 0) - Math.abs(balances[a.id] || 0)
+    return [...friends].filter(f => !f.pending).sort((a, b) => {
+      return Math.abs(balances[b.user_id] || 0) - Math.abs(balances[a.user_id] || 0)
     })
-  }, [balances])
+  }, [friends, balances])
 
-  // Activity feed
-  const activityFeed = useMemo(() => {
-    return [...expenses].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-  }, [expenses])
-
-  // Get user/friend name by ID
-  const getName = (id: string): string => {
-    if (id === ME_ID) return 'You'
-    return MOCK_FRIENDS.find(f => f.id === id)?.name || 'Unknown'
-  }
-
-  // Handle add expense
-  const handleAddExpense = (newExpense: Omit<Expense, 'id' | 'createdAt'>) => {
-    const expense: Expense = {
-      ...newExpense,
-      id: generateId(),
-      createdAt: new Date(),
+  // Get name helper
+  const getName = useCallback((userId: string): string => {
+    if (userId === user.user_id) return 'You'
+    const friend = friends.find(f => f.user_id === userId)
+    if (friend) return friend.full_name || friend.email.split('@')[0]
+    for (const group of groups) {
+      const member = group.members.find(m => m.user_id === userId)
+      if (member) return member.profile.full_name || member.profile.email.split('@')[0]
     }
-    setExpenses(prev => [expense, ...prev])
+    return 'Unknown'
+  }, [user, friends, groups])
+
+  // ============================================
+  // STUB API HANDLERS - Replace with real API later
+  // ============================================
+
+  // Invite friend (stub)
+  const handleInviteFriend = useCallback((email: string, groupId?: string) => {
+    // Check if already a friend
+    if (friends.some(f => f.email.toLowerCase() === email.toLowerCase())) {
+      showToast('This person is already your friend', 'error')
+      return
+    }
+
+    // Check if already invited
+    if (pendingInvites.some(i => i.invited_email.toLowerCase() === email.toLowerCase())) {
+      showToast('Invite already sent to this email', 'error')
+      return
+    }
+
+    // Create pending invite
+    const newInvite: PendingInvite = {
+      id: generateId(),
+      invited_email: email.toLowerCase(),
+      group_id: groupId || null,
+      status: 'sent',
+      created_at: new Date().toISOString(),
+    }
+    setPendingInvites(prev => [newInvite, ...prev])
+
+    // Also add as pending friend
+    const newFriend: Friend = {
+      user_id: generateId(),
+      email: email.toLowerCase(),
+      full_name: email.split('@')[0],
+      avatar_url: null,
+      friendship_id: generateId(),
+      status: 'pending',
+      pending: true,
+      invitedAt: new Date(),
+    }
+    setFriends(prev => [...prev, newFriend])
+
+    showToast(`Invite sent to ${email}`)
+    setShowAddFriendModal(false)
+  }, [friends, pendingInvites, showToast])
+
+  // Create expense (stub)
+  const handleCreateExpense = useCallback((
+    description: string,
+    amount: number,
+    paidBy: string,
+    splitUserIds: string[],
+    groupId?: string
+  ) => {
+    // Calculate equal splits with proper rounding
+    const numSplits = splitUserIds.length
+    const baseShare = Math.floor((amount * 100) / numSplits) / 100
+    const remainder = Math.round((amount - baseShare * numSplits) * 100)
+
+    const splits: ExpenseSplit[] = splitUserIds.map((userId, index) => ({
+      id: generateId(),
+      user_id: userId,
+      share: index < remainder ? baseShare + 0.01 : baseShare,
+    }))
+
+    const newExpense: Expense = {
+      id: generateId(),
+      description,
+      amount,
+      currency: 'USD',
+      paid_by: paidBy,
+      group_id: groupId || null,
+      created_by: user.user_id,
+      created_at: new Date().toISOString(),
+      splits,
+    }
+
+    setExpenses(prev => [newExpense, ...prev])
+    showToast('Expense added!')
     setShowAddModal(false)
+  }, [user, showToast])
+
+  // Create group (stub)
+  const handleCreateGroup = useCallback((name: string, emoji: string) => {
+    const newGroup: Group = {
+      id: generateId(),
+      name,
+      emoji,
+      owner_id: user.user_id,
+      members: [
+        { user_id: user.user_id, role: 'owner', profile: user },
+      ],
+    }
+
+    setGroups(prev => [...prev, newGroup])
+    showToast('Group created!')
+    setShowCreateGroupModal(false)
+  }, [user, showToast])
+
+  // Add member to group (stub)
+  const handleAddMemberToGroup = useCallback((groupId: string, friendId: string) => {
+    const friend = friends.find(f => f.user_id === friendId)
+    if (!friend) return
+
+    setGroups(prev => prev.map(g => {
+      if (g.id !== groupId) return g
+      if (g.members.some(m => m.user_id === friendId)) return g
+      return {
+        ...g,
+        members: [...g.members, {
+          user_id: friendId,
+          role: 'member' as const,
+          profile: friend,
+        }],
+      }
+    }))
+    showToast(`${friend.full_name} added to group`)
+  }, [friends, showToast])
+
+  // ============================================
+  // RENDER
+  // ============================================
+
+  // Sign in screen (fake)
+  if (!isSignedIn) {
+    return (
+      <div className="trips-page">
+        <style>{styles}</style>
+        <div className="trips-auth-screen">
+          <div className="trips-auth-logo">💸</div>
+          <h1>Trips & Splits</h1>
+          <p>Split expenses with friends, the easy way</p>
+          
+          <form onSubmit={handleFakeSignIn} className="trips-auth-form">
+            <input
+              type="email"
+              placeholder="Enter your email"
+              value={signInEmail}
+              onChange={e => setSignInEmail(e.target.value)}
+              className="trips-input"
+              autoFocus
+            />
+            <button 
+              type="submit" 
+              className="trips-submit-btn"
+              disabled={signingIn || !signInEmail.includes('@')}
+            >
+              {signingIn ? (
+                <div className="trips-spinner-small"></div>
+              ) : (
+                <>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/>
+                  </svg>
+                  Continue with Email
+                </>
+              )}
+            </button>
+          </form>
+
+          <div className="trips-auth-divider">
+            <span>Demo Mode</span>
+          </div>
+
+          <p className="trips-auth-note">
+            This is a demo with mock data.<br/>
+            Real Supabase auth will be connected later.
+          </p>
+        </div>
+      </div>
+    )
   }
 
   return (
     <div className="trips-page">
       <style>{styles}</style>
       
+      {/* Toast */}
+      {toast && (
+        <div className={`trips-toast ${toast.type}`}>
+          {toast.type === 'success' ? (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
+            </svg>
+          ) : (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>
+            </svg>
+          )}
+          {toast.message}
+        </div>
+      )}
+
       {/* Header */}
       <header className="trips-header">
         <div className="trips-header-left">
@@ -313,11 +535,11 @@ export default function TripsPage() {
           </Link>
           <div>
             <h1 className="trips-header-title">Trips & Splits</h1>
-            <p className="trips-header-subtitle">Personal Finance</p>
+            <p className="trips-header-subtitle">{user.full_name} • Demo Mode</p>
           </div>
         </div>
-        <div className="trips-header-avatar" style={{ background: getAvatarColor(user.email) }}>
-          {user.email[0]?.toUpperCase() || 'U'}
+        <div className="trips-header-avatar" style={{ background: getAvatarColor(user.user_id) }}>
+          {getInitials(user.full_name)}
         </div>
       </header>
 
@@ -350,8 +572,7 @@ export default function TripsPage() {
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
             <circle cx="9" cy="7" r="4"/>
-            <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
-            <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
           </svg>
           Friends
         </button>
@@ -360,9 +581,7 @@ export default function TripsPage() {
           onClick={() => setActiveTab('groups')}
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-            <path d="M2 17l10 5 10-5"/>
-            <path d="M2 12l10 5 10-5"/>
+            <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
           </svg>
           Groups
         </button>
@@ -382,33 +601,65 @@ export default function TripsPage() {
         {/* Friends Tab */}
         {activeTab === 'friends' && (
           <div className="trips-friends-list">
+            {/* Add Friend Button */}
+            <button className="trips-add-friend-btn" onClick={() => setShowAddFriendModal(true)}>
+              <div className="trips-add-friend-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                  <circle cx="8.5" cy="7" r="4"/>
+                  <line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/>
+                </svg>
+              </div>
+              <div className="trips-add-friend-text">
+                <span className="trips-add-friend-title">Invite a friend</span>
+                <span className="trips-add-friend-subtitle">Send invite via email</span>
+              </div>
+            </button>
+
+            {/* Pending Invites */}
+            {friends.filter(f => f.pending).map(friend => (
+              <div key={friend.user_id} className="trips-friend-item pending">
+                <div className="trips-friend-avatar" style={{ background: '#475569' }}>?</div>
+                <div className="trips-friend-info">
+                  <span className="trips-friend-name">{friend.email}</span>
+                  <span className="trips-friend-status trips-pending">Invite pending</span>
+                </div>
+                <span className="trips-friend-date">{formatDate(friend.invitedAt || new Date())}</span>
+              </div>
+            ))}
+
+            {/* Friends List */}
+            {sortedFriends.length === 0 && friends.filter(f => f.pending).length === 0 && (
+              <div className="trips-empty">
+                <p>No friends yet. Invite someone to get started!</p>
+              </div>
+            )}
+
             {sortedFriends.map(friend => {
-              const balance = balances[friend.id] || 0
+              const balance = balances[friend.user_id] || 0
               const hasBalance = Math.abs(balance) > 0.01
               
               return (
-                <div key={friend.id} className="trips-friend-item">
-                  <div className="trips-friend-avatar" style={{ background: getAvatarColor(friend.id) }}>
-                    {getInitials(friend.name)}
+                <div key={friend.user_id} className="trips-friend-item">
+                  <div className="trips-friend-avatar" style={{ background: getAvatarColor(friend.user_id) }}>
+                    {getInitials(friend.full_name)}
                   </div>
                   <div className="trips-friend-info">
-                    <span className="trips-friend-name">{friend.name}</span>
-                    {hasBalance && (
+                    <span className="trips-friend-name">{friend.full_name || friend.email.split('@')[0]}</span>
+                    {hasBalance ? (
                       <span className={`trips-friend-status ${balance > 0 ? 'trips-positive' : 'trips-negative'}`}>
                         {balance > 0 ? 'owes you' : 'you owe'}
                       </span>
-                    )}
-                    {!hasBalance && (
+                    ) : (
                       <span className="trips-friend-status trips-settled">settled up</span>
                     )}
                   </div>
                   <div className="trips-friend-amount">
-                    {hasBalance && (
+                    {hasBalance ? (
                       <span className={balance > 0 ? 'trips-positive' : 'trips-negative'}>
                         {balance > 0 ? '+' : '-'}{formatCurrency(balance)}
                       </span>
-                    )}
-                    {!hasBalance && (
+                    ) : (
                       <span className="trips-settled">$0.00</span>
                     )}
                   </div>
@@ -421,15 +672,33 @@ export default function TripsPage() {
         {/* Groups Tab */}
         {activeTab === 'groups' && (
           <div className="trips-groups-list">
+            {/* Create Group Button */}
+            <button className="trips-add-friend-btn" onClick={() => setShowCreateGroupModal(true)}>
+              <div className="trips-add-friend-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                  <line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/>
+                </svg>
+              </div>
+              <div className="trips-add-friend-text">
+                <span className="trips-add-friend-title">Create group</span>
+                <span className="trips-add-friend-subtitle">For trips, roommates, etc.</span>
+              </div>
+            </button>
+
+            {groups.length === 0 && (
+              <div className="trips-empty">
+                <p>No groups yet. Create one to split expenses!</p>
+              </div>
+            )}
+
             {groups.map(group => {
               const balance = groupBalances[group.id] || 0
               const hasBalance = Math.abs(balance) > 0.01
-              const memberCount = group.memberIds.length
               const isExpanded = expandedGroup === group.id
-              const members = group.memberIds.map(id => 
-                id === ME_ID ? { id, name: 'You' } : MOCK_FRIENDS.find(f => f.id === id)
-              ).filter(Boolean)
-              const availableFriends = MOCK_FRIENDS.filter(f => !group.memberIds.includes(f.id))
+              const availableFriends = friends.filter(f => 
+                !f.pending && !group.members.some(m => m.user_id === f.user_id)
+              )
               
               return (
                 <div key={group.id} className="trips-group-wrapper">
@@ -437,15 +706,15 @@ export default function TripsPage() {
                     className={`trips-group-item ${isExpanded ? 'expanded' : ''}`}
                     onClick={() => setExpandedGroup(isExpanded ? null : group.id)}
                   >
-                    <div className="trips-group-icon">
-                      {group.emoji}
-                    </div>
+                    <div className="trips-group-icon">{group.emoji}</div>
                     <div className="trips-group-info">
                       <span className="trips-group-name">{group.name}</span>
-                      <span className="trips-group-members">{memberCount} members • tap to {isExpanded ? 'collapse' : 'view'}</span>
+                      <span className="trips-group-members">
+                        {group.members.length} members • tap to {isExpanded ? 'collapse' : 'view'}
+                      </span>
                     </div>
                     <div className="trips-group-balance">
-                      {hasBalance && (
+                      {hasBalance ? (
                         <>
                           <span className={balance > 0 ? 'trips-positive' : 'trips-negative'}>
                             {balance > 0 ? '+' : '-'}{formatCurrency(balance)}
@@ -454,8 +723,7 @@ export default function TripsPage() {
                             {balance > 0 ? 'you are owed' : 'you owe'}
                           </span>
                         </>
-                      )}
-                      {!hasBalance && (
+                      ) : (
                         <span className="trips-settled">settled up</span>
                       )}
                     </div>
@@ -468,94 +736,62 @@ export default function TripsPage() {
                   {isExpanded && (
                     <div className="trips-group-members-list">
                       <div className="trips-group-members-header">Members</div>
-                      {members.map(member => member && (
-                        <div key={member.id} className="trips-group-member">
+                      {group.members.map(member => (
+                        <div key={member.user_id} className="trips-group-member">
                           <div 
                             className="trips-group-member-avatar" 
-                            style={{ background: getAvatarColor(member.id) }}
+                            style={{ background: getAvatarColor(member.user_id) }}
                           >
-                            {member.id === ME_ID ? 'Y' : getInitials(member.name)}
+                            {getInitials(member.profile.full_name)}
                           </div>
-                          <span className="trips-group-member-name">{member.name}</span>
-                          {member.id === ME_ID && <span className="trips-group-member-you">(You)</span>}
-                          {member.id !== ME_ID && (
-                            <button 
-                              className="trips-group-member-remove"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                handleRemoveMemberFromGroup(group.id, member.id)
-                              }}
-                            >
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <line x1="18" y1="6" x2="6" y2="18"/>
-                                <line x1="6" y1="6" x2="18" y2="18"/>
-                              </svg>
-                            </button>
-                          )}
+                          <span className="trips-group-member-name">
+                            {member.user_id === user.user_id ? 'You' : member.profile.full_name || member.profile.email.split('@')[0]}
+                          </span>
+                          {member.role === 'owner' && <span className="trips-group-member-badge">Owner</span>}
                         </div>
                       ))}
+                      
+                      {/* Add member dropdown */}
+                      {group.owner_id === user.user_id && availableFriends.length > 0 && (
+                        <div className="trips-add-member-section">
+                          <div className="trips-add-member-label">Add member:</div>
+                          <div className="trips-add-member-list">
+                            {availableFriends.map(friend => (
+                              <button
+                                key={friend.user_id}
+                                className="trips-add-member-btn"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  handleAddMemberToGroup(group.id, friend.user_id)
+                                }}
+                              >
+                                <div className="trips-add-member-avatar" style={{ background: getAvatarColor(friend.user_id) }}>
+                                  {getInitials(friend.full_name)}
+                                </div>
+                                <span>{friend.full_name}</span>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                                </svg>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
                       <button 
                         className="trips-invite-btn"
                         onClick={(e) => {
                           e.stopPropagation()
-                          setShowInviteModal(group.id)
+                          setShowAddFriendModal(true)
                         }}
                       >
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                           <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
                           <circle cx="8.5" cy="7" r="4"/>
-                          <line x1="20" y1="8" x2="20" y2="14"/>
-                          <line x1="23" y1="11" x2="17" y2="11"/>
+                          <line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/>
                         </svg>
-                        Invite Member
+                        Invite New Person
                       </button>
-                      
-                      {/* Invite Modal */}
-                      {showInviteModal === group.id && (
-                        <div className="trips-invite-dropdown">
-                          <div className="trips-invite-dropdown-header">
-                            <span>Add to {group.name}</span>
-                            <button 
-                              className="trips-invite-dropdown-close"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                setShowInviteModal(null)
-                              }}
-                            >
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <line x1="18" y1="6" x2="6" y2="18"/>
-                                <line x1="6" y1="6" x2="18" y2="18"/>
-                              </svg>
-                            </button>
-                          </div>
-                          {availableFriends.length === 0 ? (
-                            <div className="trips-invite-empty">All friends are already members</div>
-                          ) : (
-                            availableFriends.map(friend => (
-                              <button
-                                key={friend.id}
-                                className="trips-invite-option"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  handleAddMemberToGroup(group.id, friend.id)
-                                }}
-                              >
-                                <div 
-                                  className="trips-invite-option-avatar"
-                                  style={{ background: getAvatarColor(friend.id) }}
-                                >
-                                  {getInitials(friend.name)}
-                                </div>
-                                <span>{friend.name}</span>
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                  <line x1="12" y1="5" x2="12" y2="19"/>
-                                  <line x1="5" y1="12" x2="19" y2="12"/>
-                                </svg>
-                              </button>
-                            ))
-                          )}
-                        </div>
-                      )}
                     </div>
                   )}
                 </div>
@@ -567,13 +803,15 @@ export default function TripsPage() {
         {/* Activity Tab */}
         {activeTab === 'activity' && (
           <div className="trips-activity-list">
-            {activityFeed.map(expense => {
-              const isPayer = expense.paidBy === ME_ID
-              const payer = getName(expense.paidBy)
-              const others = expense.splitBetween.filter(id => id !== expense.paidBy)
-              const myShare = expense.splitBetween.includes(ME_ID) 
-                ? expense.amount / expense.splitBetween.length 
-                : 0
+            {expenses.length === 0 && (
+              <div className="trips-empty">
+                <p>No expenses yet. Add one to get started!</p>
+              </div>
+            )}
+            
+            {expenses.map(expense => {
+              const isPayer = expense.paid_by === user.user_id
+              const myShare = expense.splits.find(s => s.user_id === user.user_id)?.share || 0
               
               return (
                 <div key={expense.id} className="trips-activity-item">
@@ -582,7 +820,7 @@ export default function TripsPage() {
                   </div>
                   <div className="trips-activity-info">
                     <div className="trips-activity-main">
-                      <span className="trips-activity-payer">{payer}</span>
+                      <span className="trips-activity-payer">{getName(expense.paid_by)}</span>
                       <span className="trips-activity-action"> paid </span>
                       <span className="trips-activity-amount-inline">{formatCurrency(expense.amount)}</span>
                       <span className="trips-activity-action"> for </span>
@@ -590,20 +828,18 @@ export default function TripsPage() {
                     </div>
                     <div className="trips-activity-details">
                       <span className="trips-activity-split">
-                        Split with {others.map(id => getName(id)).join(', ')}
+                        Split with {expense.splits.filter(s => s.user_id !== expense.paid_by).map(s => getName(s.user_id)).join(', ')}
                       </span>
                       {!isPayer && myShare > 0 && (
-                        <span className="trips-activity-owe trips-negative">
-                          You owe {formatCurrency(myShare)}
-                        </span>
+                        <span className="trips-activity-owe trips-negative">You owe {formatCurrency(myShare)}</span>
                       )}
                       {isPayer && (
                         <span className="trips-activity-owe trips-positive">
-                          You get back {formatCurrency(expense.amount - (expense.amount / expense.splitBetween.length))}
+                          You get back {formatCurrency(expense.amount - myShare)}
                         </span>
                       )}
                     </div>
-                    <span className="trips-activity-date">{formatDate(expense.createdAt)}</span>
+                    <span className="trips-activity-date">{formatDate(expense.created_at)}</span>
                   </div>
                 </div>
               )
@@ -615,46 +851,81 @@ export default function TripsPage() {
       {/* Add Expense Button */}
       <button className="trips-add-btn" onClick={() => setShowAddModal(true)}>
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-          <line x1="12" y1="5" x2="12" y2="19"/>
-          <line x1="5" y1="12" x2="19" y2="12"/>
+          <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
         </svg>
       </button>
 
-      {/* Add Expense Modal */}
+      {/* Modals */}
       {showAddModal && (
         <AddExpenseModal
-          friends={MOCK_FRIENDS}
+          currentUserId={user.user_id}
+          friends={friends.filter(f => !f.pending)}
           groups={groups}
           onClose={() => setShowAddModal(false)}
-          onSubmit={handleAddExpense}
+          onSubmit={handleCreateExpense}
+        />
+      )}
+
+      {showAddFriendModal && (
+        <AddFriendModal
+          groups={groups}
+          onClose={() => setShowAddFriendModal(false)}
+          onSubmit={handleInviteFriend}
+        />
+      )}
+
+      {showCreateGroupModal && (
+        <CreateGroupModal
+          onClose={() => setShowCreateGroupModal(false)}
+          onSubmit={handleCreateGroup}
         />
       )}
     </div>
   )
 }
 
-// ============ Add Expense Modal Component ============
+// ============ Add Expense Modal ============
 interface AddExpenseModalProps {
-  friends: User[]
+  currentUserId: string
+  friends: Friend[]
   groups: Group[]
   onClose: () => void
-  onSubmit: (expense: Omit<Expense, 'id' | 'createdAt'>) => void
+  onSubmit: (description: string, amount: number, paidBy: string, splitUserIds: string[], groupId?: string) => void
 }
 
-function AddExpenseModal({ friends, groups, onClose, onSubmit }: AddExpenseModalProps) {
+function AddExpenseModal({ currentUserId, friends, groups, onClose, onSubmit }: AddExpenseModalProps) {
   const [description, setDescription] = useState('')
   const [amount, setAmount] = useState('')
-  const [paidBy, setPaidBy] = useState(ME_ID)
-  const [splitWith, setSplitWith] = useState<string[]>([ME_ID, ...friends.map(f => f.id)])
+  const [paidBy, setPaidBy] = useState(currentUserId)
+  const [splitWith, setSplitWith] = useState<string[]>([currentUserId])
   const [groupId, setGroupId] = useState<string>('')
   const [error, setError] = useState('')
 
+  const allParticipants = useMemo(() => {
+    const participants = new Map<string, { id: string; name: string }>()
+    participants.set(currentUserId, { id: currentUserId, name: 'You' })
+    
+    friends.forEach(f => {
+      participants.set(f.user_id, { id: f.user_id, name: f.full_name || f.email.split('@')[0] })
+    })
+    
+    if (groupId) {
+      const group = groups.find(g => g.id === groupId)
+      group?.members.forEach(m => {
+        if (!participants.has(m.user_id)) {
+          participants.set(m.user_id, { 
+            id: m.user_id, 
+            name: m.profile.full_name || m.profile.email.split('@')[0] 
+          })
+        }
+      })
+    }
+    
+    return Array.from(participants.values())
+  }, [currentUserId, friends, groups, groupId])
+
   const handleToggleSplit = (id: string) => {
-    setSplitWith(prev => 
-      prev.includes(id) 
-        ? prev.filter(x => x !== id)
-        : [...prev, id]
-    )
+    setSplitWith(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
   }
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -667,30 +938,22 @@ function AddExpenseModal({ friends, groups, onClose, onSubmit }: AddExpenseModal
       return
     }
     if (isNaN(amountNum) || amountNum <= 0) {
-      setError('Please enter a valid amount greater than 0')
+      setError('Please enter a valid amount')
       return
     }
     if (splitWith.length < 2) {
-      setError('Please select at least 2 people to split with')
+      setError('Select at least 2 people to split')
       return
     }
     if (!splitWith.includes(paidBy)) {
-      setError('The payer must be included in the split')
+      setError('Payer must be in the split')
       return
     }
 
-    onSubmit({
-      description: description.trim(),
-      amount: amountNum,
-      currency: 'USD',
-      paidBy,
-      splitBetween: splitWith,
-      splitMode: 'equal',
-      groupId: groupId || undefined,
-    })
+    onSubmit(description.trim(), amountNum, paidBy, splitWith, groupId || undefined)
   }
 
-  const perPersonAmount = splitWith.length > 0 ? parseFloat(amount) / splitWith.length : 0
+  const perPerson = splitWith.length > 0 && amount ? parseFloat(amount) / splitWith.length : 0
 
   return (
     <div className="trips-modal-overlay" onClick={onClose}>
@@ -699,8 +962,7 @@ function AddExpenseModal({ friends, groups, onClose, onSubmit }: AddExpenseModal
           <h2>Add Expense</h2>
           <button className="trips-modal-close" onClick={onClose}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <line x1="18" y1="6" x2="6" y2="18"/>
-              <line x1="6" y1="6" x2="18" y2="18"/>
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
             </svg>
           </button>
         </div>
@@ -712,7 +974,7 @@ function AddExpenseModal({ friends, groups, onClose, onSubmit }: AddExpenseModal
             <label>Description</label>
             <input
               type="text"
-              placeholder="What was this expense for?"
+              placeholder="What was this for?"
               value={description}
               onChange={e => setDescription(e.target.value)}
               className="trips-input"
@@ -737,57 +999,116 @@ function AddExpenseModal({ friends, groups, onClose, onSubmit }: AddExpenseModal
           </div>
 
           <div className="trips-form-group">
-            <label>Paid by</label>
-            <select
-              value={paidBy}
-              onChange={e => setPaidBy(e.target.value)}
-              className="trips-select"
-            >
-              <option value={ME_ID}>You</option>
-              {friends.map(f => (
-                <option key={f.id} value={f.id}>{f.name}</option>
+            <label>Group (optional)</label>
+            <select value={groupId} onChange={e => setGroupId(e.target.value)} className="trips-select">
+              <option value="">No group</option>
+              {groups.map(g => (
+                <option key={g.id} value={g.id}>{g.emoji} {g.name}</option>
               ))}
             </select>
           </div>
 
           <div className="trips-form-group">
-            <label>Split equally with</label>
+            <label>Paid by</label>
+            <select value={paidBy} onChange={e => setPaidBy(e.target.value)} className="trips-select">
+              {allParticipants.map(p => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="trips-form-group">
+            <label>Split with</label>
             <div className="trips-split-list">
-              <label className="trips-split-item">
-                <input
-                  type="checkbox"
-                  checked={splitWith.includes(ME_ID)}
-                  onChange={() => handleToggleSplit(ME_ID)}
-                />
-                <span className="trips-split-checkbox"></span>
-                <span>You</span>
-              </label>
-              {friends.map(f => (
-                <label key={f.id} className="trips-split-item">
+              {allParticipants.map(p => (
+                <label key={p.id} className="trips-split-item">
                   <input
                     type="checkbox"
-                    checked={splitWith.includes(f.id)}
-                    onChange={() => handleToggleSplit(f.id)}
+                    checked={splitWith.includes(p.id)}
+                    onChange={() => handleToggleSplit(p.id)}
                   />
                   <span className="trips-split-checkbox"></span>
-                  <span>{f.name}</span>
+                  <span>{p.name}</span>
                 </label>
               ))}
             </div>
-            {splitWith.length > 0 && amount && !isNaN(parseFloat(amount)) && parseFloat(amount) > 0 && (
+            {perPerson > 0 && (
               <div className="trips-split-preview">
-                {formatCurrency(perPersonAmount)} per person ({splitWith.length} people)
+                {formatCurrency(perPerson)} per person ({splitWith.length} people)
               </div>
             )}
           </div>
 
+          <button type="submit" className="trips-submit-btn">Add Expense</button>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// ============ Add Friend Modal ============
+interface AddFriendModalProps {
+  groups: Group[]
+  onClose: () => void
+  onSubmit: (email: string, groupId?: string) => void
+}
+
+function AddFriendModal({ groups, onClose, onSubmit }: AddFriendModalProps) {
+  const [email, setEmail] = useState('')
+  const [groupId, setGroupId] = useState('')
+  const [error, setError] = useState('')
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    setError('')
+
+    if (!email.trim() || !email.includes('@')) {
+      setError('Please enter a valid email')
+      return
+    }
+
+    onSubmit(email.trim().toLowerCase(), groupId || undefined)
+  }
+
+  return (
+    <div className="trips-modal-overlay" onClick={onClose}>
+      <div className="trips-modal trips-modal-small" onClick={e => e.stopPropagation()}>
+        <div className="trips-modal-header">
+          <h2>Invite Friend</h2>
+          <button className="trips-modal-close" onClick={onClose}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        
+        <form onSubmit={handleSubmit} className="trips-modal-form">
+          {error && <div className="trips-modal-error">{error}</div>}
+
+          <div className="trips-invite-hero">
+            <div className="trips-invite-hero-icon">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/>
+              </svg>
+            </div>
+            <p>They'll receive an email to join Budgieee and connect with you.</p>
+          </div>
+          
           <div className="trips-form-group">
-            <label>Group (optional)</label>
-            <select
-              value={groupId}
-              onChange={e => setGroupId(e.target.value)}
-              className="trips-select"
-            >
+            <label>Email Address</label>
+            <input
+              type="email"
+              placeholder="friend@example.com"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              className="trips-input"
+              autoFocus
+            />
+          </div>
+
+          <div className="trips-form-group">
+            <label>Add to group (optional)</label>
+            <select value={groupId} onChange={e => setGroupId(e.target.value)} className="trips-select">
               <option value="">No group</option>
               {groups.map(g => (
                 <option key={g.id} value={g.id}>{g.emoji} {g.name}</option>
@@ -796,8 +1117,85 @@ function AddExpenseModal({ friends, groups, onClose, onSubmit }: AddExpenseModal
           </div>
 
           <button type="submit" className="trips-submit-btn">
-            Add Expense
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/>
+            </svg>
+            Send Invite
           </button>
+
+          <p className="trips-demo-note">Demo mode: invite is simulated locally</p>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// ============ Create Group Modal ============
+interface CreateGroupModalProps {
+  onClose: () => void
+  onSubmit: (name: string, emoji: string) => void
+}
+
+function CreateGroupModal({ onClose, onSubmit }: CreateGroupModalProps) {
+  const [name, setName] = useState('')
+  const [emoji, setEmoji] = useState('👥')
+  const [error, setError] = useState('')
+
+  const emojis = ['👥', '🏝️', '🏠', '🍕', '✈️', '🚗', '🎉', '💼', '🏕️', '🎿']
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!name.trim()) {
+      setError('Please enter a group name')
+      return
+    }
+    onSubmit(name.trim(), emoji)
+  }
+
+  return (
+    <div className="trips-modal-overlay" onClick={onClose}>
+      <div className="trips-modal trips-modal-small" onClick={e => e.stopPropagation()}>
+        <div className="trips-modal-header">
+          <h2>Create Group</h2>
+          <button className="trips-modal-close" onClick={onClose}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        
+        <form onSubmit={handleSubmit} className="trips-modal-form">
+          {error && <div className="trips-modal-error">{error}</div>}
+          
+          <div className="trips-form-group">
+            <label>Group Name</label>
+            <input
+              type="text"
+              placeholder="e.g., Bali Trip 2026"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              className="trips-input"
+              autoFocus
+            />
+          </div>
+
+          <div className="trips-form-group">
+            <label>Icon</label>
+            <div className="trips-emoji-picker">
+              {emojis.map(e => (
+                <button
+                  key={e}
+                  type="button"
+                  className={`trips-emoji-btn ${emoji === e ? 'active' : ''}`}
+                  onClick={() => setEmoji(e)}
+                >
+                  {e}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <button type="submit" className="trips-submit-btn">Create Group</button>
         </form>
       </div>
     </div>
@@ -808,41 +1206,12 @@ function AddExpenseModal({ friends, groups, onClose, onSubmit }: AddExpenseModal
 const styles = `
   .trips-page {
     min-height: 100vh;
-    background: linear-gradient(180deg, 
-      #050d18 0%, 
-      #0a1628 15%, 
-      #142136 35%, 
-      #1a2d4a 50%, 
-      #142136 65%, 
-      #0a1628 85%, 
-      #050d18 100%
-    );
+    background: linear-gradient(180deg, #050d18 0%, #0a1628 15%, #142136 35%, #1a2d4a 50%, #142136 65%, #0a1628 85%, #050d18 100%);
     color: #e2e8f0;
     padding-bottom: 100px;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   }
-
-  /* Loading */
-  .trips-loading {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 100vh;
-  }
-  .trips-spinner {
-    width: 40px;
-    height: 40px;
-    border: 3px solid rgba(59, 130, 246, 0.2);
-    border-top-color: #3b82f6;
-    border-radius: 50%;
-    animation: trips-spin 0.8s linear infinite;
-  }
-  @keyframes trips-spin {
-    to { transform: rotate(360deg); }
-  }
-
-  /* Auth Required */
-  .trips-auth-required {
+  .trips-auth-screen {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -851,37 +1220,63 @@ const styles = `
     padding: 24px;
     text-align: center;
   }
-  .trips-auth-icon {
-    font-size: 48px;
-    margin-bottom: 16px;
-  }
-  .trips-auth-required h2 {
-    font-size: 1.5rem;
-    font-weight: 600;
-    margin-bottom: 8px;
-    color: #f1f5f9;
-  }
-  .trips-auth-required p {
-    color: #94a3b8;
-    margin-bottom: 24px;
-  }
-  .trips-auth-button {
-    display: inline-flex;
+  .trips-auth-logo { font-size: 64px; margin-bottom: 16px; }
+  .trips-auth-screen h1 { font-size: 2rem; font-weight: 700; color: #f1f5f9; margin: 0 0 8px 0; }
+  .trips-auth-screen > p { color: #94a3b8; margin-bottom: 32px; }
+  .trips-auth-form { width: 100%; max-width: 320px; display: flex; flex-direction: column; gap: 12px; }
+  .trips-auth-divider {
+    display: flex;
     align-items: center;
-    padding: 12px 24px;
-    background: linear-gradient(135deg, #3b82f6, #2563eb);
-    color: white;
+    gap: 16px;
+    margin: 24px 0;
+    color: #475569;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+  .trips-auth-divider::before, .trips-auth-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: rgba(255,255,255,0.1);
+  }
+  .trips-auth-note { font-size: 0.8125rem; color: #64748b; line-height: 1.5; }
+  .trips-demo-note {
+    font-size: 0.75rem;
+    color: #64748b;
+    text-align: center;
+    margin: 0;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+  }
+  .trips-spinner-small {
+    width: 20px;
+    height: 20px;
+    border: 2px solid rgba(255,255,255,0.3);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: trips-spin 0.8s linear infinite;
+  }
+  @keyframes trips-spin { to { transform: rotate(360deg); } }
+  .trips-toast {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 20px;
     border-radius: 12px;
-    text-decoration: none;
+    color: white;
+    font-size: 0.875rem;
     font-weight: 500;
-    transition: transform 0.2s, box-shadow 0.2s;
+    z-index: 1100;
+    animation: trips-toast-in 0.3s ease-out;
   }
-  .trips-auth-button:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 24px rgba(59, 130, 246, 0.3);
-  }
-
-  /* Header */
+  .trips-toast.success { background: linear-gradient(135deg, #10b981, #059669); box-shadow: 0 4px 20px rgba(16, 185, 129, 0.4); }
+  .trips-toast.error { background: linear-gradient(135deg, #ef4444, #dc2626); box-shadow: 0 4px 20px rgba(239, 68, 68, 0.4); }
+  @keyframes trips-toast-in { from { opacity: 0; transform: translateX(-50%) translateY(-20px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
   .trips-header {
     display: flex;
     align-items: center;
@@ -889,11 +1284,7 @@ const styles = `
     padding: 16px 20px;
     border-bottom: 1px solid rgba(255,255,255,0.08);
   }
-  .trips-header-left {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
+  .trips-header-left { display: flex; align-items: center; gap: 12px; }
   .trips-back-btn {
     display: flex;
     align-items: center;
@@ -904,23 +1295,10 @@ const styles = `
     border-radius: 10px;
     color: #94a3b8;
     text-decoration: none;
-    transition: background 0.2s, color 0.2s;
   }
-  .trips-back-btn:hover {
-    background: rgba(255,255,255,0.1);
-    color: #e2e8f0;
-  }
-  .trips-header-title {
-    font-size: 1.25rem;
-    font-weight: 600;
-    color: #f1f5f9;
-    margin: 0;
-  }
-  .trips-header-subtitle {
-    font-size: 0.75rem;
-    color: #64748b;
-    margin: 0;
-  }
+  .trips-back-btn:hover { background: rgba(255,255,255,0.1); color: #e2e8f0; }
+  .trips-header-title { font-size: 1.25rem; font-weight: 600; color: #f1f5f9; margin: 0; }
+  .trips-header-subtitle { font-size: 0.75rem; color: #64748b; margin: 0; }
   .trips-header-avatar {
     width: 36px;
     height: 36px;
@@ -932,14 +1310,7 @@ const styles = `
     font-size: 0.875rem;
     color: white;
   }
-
-  /* Summary Cards */
-  .trips-summary {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
-    padding: 20px;
-  }
+  .trips-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 20px; }
   .trips-summary-card {
     background: rgba(255,255,255,0.04);
     border: 1px solid rgba(255,255,255,0.08);
@@ -949,51 +1320,16 @@ const styles = `
     flex-direction: column;
     gap: 4px;
   }
-  .trips-summary-owed {
-    border-color: rgba(59, 130, 246, 0.3);
-    background: rgba(59, 130, 246, 0.08);
-  }
-  .trips-summary-owe {
-    border-color: rgba(248, 113, 113, 0.2);
-    background: rgba(248, 113, 113, 0.05);
-  }
-  .trips-summary-label {
-    font-size: 0.75rem;
-    color: #94a3b8;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-  .trips-summary-amount {
-    font-size: 1.5rem;
-    font-weight: 700;
-  }
-
-  /* Net Balance */
-  .trips-net-balance {
-    text-align: center;
-    padding: 0 20px 16px;
-    font-size: 0.875rem;
-    color: #94a3b8;
-  }
-
-  /* Colors */
-  .trips-positive {
-    color: #60a5fa;
-  }
-  .trips-negative {
-    color: #f87171;
-  }
-  .trips-settled {
-    color: #64748b;
-  }
-
-  /* Tabs */
-  .trips-tabs {
-    display: flex;
-    gap: 4px;
-    padding: 0 20px;
-    border-bottom: 1px solid rgba(255,255,255,0.08);
-  }
+  .trips-summary-owed { border-color: rgba(59, 130, 246, 0.3); background: rgba(59, 130, 246, 0.08); }
+  .trips-summary-owe { border-color: rgba(248, 113, 113, 0.2); background: rgba(248, 113, 113, 0.05); }
+  .trips-summary-label { font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; }
+  .trips-summary-amount { font-size: 1.5rem; font-weight: 700; }
+  .trips-net-balance { text-align: center; padding: 0 20px 16px; font-size: 0.875rem; color: #94a3b8; }
+  .trips-positive { color: #60a5fa; }
+  .trips-negative { color: #f87171; }
+  .trips-settled { color: #64748b; }
+  .trips-pending { color: #fbbf24; }
+  .trips-tabs { display: flex; gap: 4px; padding: 0 20px; border-bottom: 1px solid rgba(255,255,255,0.08); }
   .trips-tab {
     flex: 1;
     display: flex;
@@ -1008,34 +1344,19 @@ const styles = `
     font-weight: 500;
     cursor: pointer;
     border-bottom: 2px solid transparent;
-    transition: color 0.2s, border-color 0.2s;
   }
-  .trips-tab:hover {
-    color: #94a3b8;
+  .trips-tab:hover { color: #94a3b8; }
+  .trips-tab.active { color: #60a5fa; border-bottom-color: #3b82f6; }
+  .trips-tab svg { opacity: 0.7; }
+  .trips-tab.active svg { opacity: 1; }
+  .trips-content { padding: 16px 20px; }
+  .trips-empty {
+    text-align: center;
+    padding: 40px 20px;
+    color: #64748b;
   }
-  .trips-tab.active {
-    color: #60a5fa;
-    border-bottom-color: #3b82f6;
-  }
-  .trips-tab svg {
-    opacity: 0.7;
-  }
-  .trips-tab.active svg {
-    opacity: 1;
-  }
-
-  /* Content */
-  .trips-content {
-    padding: 16px 20px;
-  }
-
-  /* Friends List */
-  .trips-friends-list {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  .trips-friend-item {
+  .trips-friends-list, .trips-groups-list, .trips-activity-list { display: flex; flex-direction: column; gap: 8px; }
+  .trips-friend-item, .trips-group-item, .trips-activity-item {
     display: flex;
     align-items: center;
     gap: 12px;
@@ -1043,13 +1364,13 @@ const styles = `
     background: rgba(255,255,255,0.04);
     border: 1px solid rgba(255,255,255,0.08);
     border-radius: 14px;
-    transition: background 0.2s, border-color 0.2s;
   }
-  .trips-friend-item:hover {
+  .trips-friend-item:hover, .trips-group-item:hover {
     background: rgba(255,255,255,0.06);
     border-color: rgba(255,255,255,0.12);
   }
-  .trips-friend-avatar {
+  .trips-friend-item.pending { opacity: 0.7; border-style: dashed; }
+  .trips-friend-avatar, .trips-group-member-avatar {
     width: 42px;
     height: 42px;
     border-radius: 50%;
@@ -1061,54 +1382,43 @@ const styles = `
     color: white;
     flex-shrink: 0;
   }
-  .trips-friend-info {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    min-width: 0;
-  }
-  .trips-friend-name {
-    font-weight: 500;
-    color: #e2e8f0;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .trips-friend-status {
-    font-size: 0.75rem;
-  }
-  .trips-friend-amount {
-    font-weight: 600;
-    font-size: 0.9375rem;
-    text-align: right;
-  }
-
-  /* Groups List */
-  .trips-groups-list {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  .trips-group-wrapper {
-    display: flex;
-    flex-direction: column;
-  }
-  .trips-group-item {
+  .trips-group-member-avatar { width: 32px; height: 32px; font-size: 0.75rem; }
+  .trips-friend-info, .trips-group-info, .trips-activity-info { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .trips-friend-name, .trips-group-name, .trips-group-member-name { font-weight: 500; color: #e2e8f0; }
+  .trips-friend-status, .trips-group-members, .trips-group-status { font-size: 0.75rem; }
+  .trips-friend-amount { font-weight: 600; font-size: 0.9375rem; text-align: right; }
+  .trips-friend-date { font-size: 0.7rem; color: #475569; }
+  .trips-add-friend-btn {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 14px;
+    width: 100%;
     padding: 14px 16px;
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.08);
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(59, 130, 246, 0.05));
+    border: 1px dashed rgba(59, 130, 246, 0.3);
     border-radius: 14px;
-    transition: background 0.2s, border-color 0.2s;
     cursor: pointer;
+    text-align: left;
   }
-  .trips-group-item:hover {
-    background: rgba(255,255,255,0.06);
-    border-color: rgba(255,255,255,0.12);
+  .trips-add-friend-btn:hover {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.15), rgba(59, 130, 246, 0.1));
+    border-color: rgba(59, 130, 246, 0.5);
   }
+  .trips-add-friend-icon {
+    width: 42px;
+    height: 42px;
+    background: rgba(59, 130, 246, 0.2);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #60a5fa;
+  }
+  .trips-add-friend-text { display: flex; flex-direction: column; gap: 2px; }
+  .trips-add-friend-title { font-weight: 600; font-size: 0.9375rem; color: #60a5fa; }
+  .trips-add-friend-subtitle { font-size: 0.75rem; color: #64748b; }
+  .trips-group-wrapper { display: flex; flex-direction: column; }
+  .trips-group-item { cursor: pointer; }
   .trips-group-item.expanded {
     border-radius: 14px 14px 0 0;
     border-bottom-color: transparent;
@@ -1126,42 +1436,10 @@ const styles = `
     font-size: 1.25rem;
     flex-shrink: 0;
   }
-  .trips-group-info {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    min-width: 0;
-  }
-  .trips-group-name {
-    font-weight: 500;
-    color: #e2e8f0;
-  }
-  .trips-group-members {
-    font-size: 0.75rem;
-    color: #64748b;
-  }
-  .trips-group-balance {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 2px;
-  }
-  .trips-group-balance > span:first-child {
-    font-weight: 600;
-    font-size: 0.9375rem;
-  }
-  .trips-group-status {
-    font-size: 0.7rem;
-  }
-  .trips-group-chevron {
-    color: #64748b;
-    transition: transform 0.2s;
-    flex-shrink: 0;
-  }
-  .trips-group-chevron.expanded {
-    transform: rotate(180deg);
-  }
+  .trips-group-balance { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+  .trips-group-balance > span:first-child { font-weight: 600; font-size: 0.9375rem; }
+  .trips-group-chevron { color: #64748b; transition: transform 0.2s; flex-shrink: 0; }
+  .trips-group-chevron.expanded { transform: rotate(180deg); }
   .trips-group-members-list {
     background: rgba(59, 130, 246, 0.05);
     border: 1px solid rgba(59, 130, 246, 0.2);
@@ -1177,59 +1455,34 @@ const styles = `
     letter-spacing: 0.05em;
     margin-bottom: 10px;
   }
-  .trips-group-member {
+  .trips-group-member { display: flex; align-items: center; gap: 10px; padding: 8px 0; }
+  .trips-group-member:not(:last-child) { border-bottom: 1px solid rgba(255,255,255,0.05); }
+  .trips-group-member-badge {
+    font-size: 0.65rem;
+    padding: 2px 6px;
+    background: rgba(59, 130, 246, 0.2);
+    color: #60a5fa;
+    border-radius: 4px;
+    margin-left: auto;
+  }
+  .trips-add-member-section { margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.08); }
+  .trips-add-member-label { font-size: 0.7rem; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+  .trips-add-member-list { display: flex; flex-direction: column; gap: 4px; }
+  .trips-add-member-btn {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 8px 0;
-  }
-  .trips-group-member:not(:last-child) {
-    border-bottom: 1px solid rgba(255,255,255,0.05);
-  }
-  .trips-group-member-avatar {
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: 600;
-    font-size: 0.75rem;
-    color: white;
-    flex-shrink: 0;
-  }
-  .trips-group-member-name {
+    padding: 8px 12px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px;
+    color: #cbd5e1;
     font-size: 0.875rem;
-    color: #e2e8f0;
-  }
-  .trips-group-member-you {
-    font-size: 0.75rem;
-    color: #60a5fa;
-    margin-left: 4px;
-  }
-  .trips-group-member-name {
-    flex: 1;
-  }
-  .trips-group-member-remove {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 24px;
-    height: 24px;
-    background: rgba(248, 113, 113, 0.1);
-    border: none;
-    border-radius: 6px;
-    color: #f87171;
     cursor: pointer;
-    opacity: 0;
-    transition: opacity 0.2s, background 0.2s;
   }
-  .trips-group-member:hover .trips-group-member-remove {
-    opacity: 1;
-  }
-  .trips-group-member-remove:hover {
-    background: rgba(248, 113, 113, 0.2);
-  }
+  .trips-add-member-btn:hover { background: rgba(59, 130, 246, 0.1); border-color: rgba(59, 130, 246, 0.3); }
+  .trips-add-member-btn svg { margin-left: auto; color: #60a5fa; }
+  .trips-add-member-avatar { width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.65rem; font-weight: 600; color: white; }
   .trips-invite-btn {
     display: flex;
     align-items: center;
@@ -1245,102 +1498,10 @@ const styles = `
     font-size: 0.875rem;
     font-weight: 500;
     cursor: pointer;
-    transition: background 0.2s, border-color 0.2s;
   }
   .trips-invite-btn:hover {
     background: rgba(59, 130, 246, 0.15);
     border-color: rgba(59, 130, 246, 0.5);
-  }
-  .trips-invite-dropdown {
-    margin-top: 12px;
-    background: rgba(10, 22, 40, 0.95);
-    border: 1px solid rgba(59, 130, 246, 0.3);
-    border-radius: 12px;
-    overflow: hidden;
-  }
-  .trips-invite-dropdown-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 12px 16px;
-    background: rgba(59, 130, 246, 0.1);
-    font-size: 0.8125rem;
-    font-weight: 600;
-    color: #60a5fa;
-  }
-  .trips-invite-dropdown-close {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 24px;
-    height: 24px;
-    background: transparent;
-    border: none;
-    color: #64748b;
-    cursor: pointer;
-    border-radius: 6px;
-    transition: background 0.2s, color 0.2s;
-  }
-  .trips-invite-dropdown-close:hover {
-    background: rgba(255,255,255,0.1);
-    color: #e2e8f0;
-  }
-  .trips-invite-empty {
-    padding: 16px;
-    text-align: center;
-    color: #64748b;
-    font-size: 0.8125rem;
-  }
-  .trips-invite-option {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    width: 100%;
-    padding: 12px 16px;
-    background: transparent;
-    border: none;
-    border-top: 1px solid rgba(255,255,255,0.05);
-    color: #e2e8f0;
-    font-size: 0.875rem;
-    cursor: pointer;
-    transition: background 0.2s;
-    text-align: left;
-  }
-  .trips-invite-option:hover {
-    background: rgba(59, 130, 246, 0.1);
-  }
-  .trips-invite-option-avatar {
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: 600;
-    font-size: 0.7rem;
-    color: white;
-    flex-shrink: 0;
-  }
-  .trips-invite-option span {
-    flex: 1;
-  }
-  .trips-invite-option svg {
-    color: #60a5fa;
-  }
-
-  /* Activity List */
-  .trips-activity-list {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  .trips-activity-item {
-    display: flex;
-    gap: 12px;
-    padding: 14px 16px;
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 14px;
   }
   .trips-activity-icon {
     width: 36px;
@@ -1352,50 +1513,15 @@ const styles = `
     font-size: 1rem;
     flex-shrink: 0;
   }
-  .trips-activity-info {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    min-width: 0;
-  }
-  .trips-activity-main {
-    font-size: 0.875rem;
-    line-height: 1.4;
-    color: #cbd5e1;
-  }
-  .trips-activity-payer {
-    font-weight: 600;
-    color: #e2e8f0;
-  }
-  .trips-activity-action {
-    color: #94a3b8;
-  }
-  .trips-activity-amount-inline {
-    font-weight: 600;
-    color: #60a5fa;
-  }
-  .trips-activity-desc {
-    color: #e2e8f0;
-  }
-  .trips-activity-details {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    font-size: 0.75rem;
-  }
-  .trips-activity-split {
-    color: #64748b;
-  }
-  .trips-activity-owe {
-    font-weight: 500;
-  }
-  .trips-activity-date {
-    font-size: 0.7rem;
-    color: #475569;
-  }
-
-  /* Add Button */
+  .trips-activity-main { font-size: 0.875rem; line-height: 1.4; color: #cbd5e1; }
+  .trips-activity-payer { font-weight: 600; color: #e2e8f0; }
+  .trips-activity-action { color: #94a3b8; }
+  .trips-activity-amount-inline { font-weight: 600; color: #60a5fa; }
+  .trips-activity-desc { color: #e2e8f0; }
+  .trips-activity-details { display: flex; flex-wrap: wrap; gap: 8px; font-size: 0.75rem; }
+  .trips-activity-split { color: #64748b; }
+  .trips-activity-owe { font-weight: 500; }
+  .trips-activity-date { font-size: 0.7rem; color: #475569; }
   .trips-add-btn {
     position: fixed;
     bottom: 24px;
@@ -1411,17 +1537,8 @@ const styles = `
     align-items: center;
     justify-content: center;
     box-shadow: 0 4px 16px rgba(59, 130, 246, 0.4);
-    transition: transform 0.2s, box-shadow 0.2s;
   }
-  .trips-add-btn:hover {
-    transform: scale(1.08);
-    box-shadow: 0 6px 24px rgba(59, 130, 246, 0.5);
-  }
-  .trips-add-btn:active {
-    transform: scale(0.96);
-  }
-
-  /* Modal */
+  .trips-add-btn:hover { transform: scale(1.08); box-shadow: 0 6px 24px rgba(59, 130, 246, 0.5); }
   .trips-modal-overlay {
     position: fixed;
     top: 0;
@@ -1447,13 +1564,10 @@ const styles = `
     display: flex;
     flex-direction: column;
   }
+  .trips-modal-small { max-width: 400px; }
   @media (min-width: 640px) {
-    .trips-modal-overlay {
-      align-items: center;
-    }
-    .trips-modal {
-      border-radius: 24px;
-    }
+    .trips-modal-overlay { align-items: center; }
+    .trips-modal { border-radius: 24px; }
   }
   .trips-modal-header {
     display: flex;
@@ -1462,12 +1576,7 @@ const styles = `
     padding: 20px 24px;
     border-bottom: 1px solid rgba(255,255,255,0.08);
   }
-  .trips-modal-header h2 {
-    font-size: 1.125rem;
-    font-weight: 600;
-    color: #f1f5f9;
-    margin: 0;
-  }
+  .trips-modal-header h2 { font-size: 1.125rem; font-weight: 600; color: #f1f5f9; margin: 0; }
   .trips-modal-close {
     display: flex;
     align-items: center;
@@ -1479,19 +1588,9 @@ const styles = `
     border-radius: 8px;
     color: #94a3b8;
     cursor: pointer;
-    transition: background 0.2s, color 0.2s;
   }
-  .trips-modal-close:hover {
-    background: rgba(255,255,255,0.1);
-    color: #e2e8f0;
-  }
-  .trips-modal-form {
-    padding: 20px 24px;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 20px;
-  }
+  .trips-modal-close:hover { background: rgba(255,255,255,0.1); color: #e2e8f0; }
+  .trips-modal-form { padding: 20px 24px; overflow-y: auto; display: flex; flex-direction: column; gap: 20px; }
   .trips-modal-error {
     padding: 12px 16px;
     background: rgba(248, 113, 113, 0.1);
@@ -1500,16 +1599,8 @@ const styles = `
     color: #f87171;
     font-size: 0.875rem;
   }
-  .trips-form-group {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  .trips-form-group label {
-    font-size: 0.8125rem;
-    font-weight: 500;
-    color: #94a3b8;
-  }
+  .trips-form-group { display: flex; flex-direction: column; gap: 8px; }
+  .trips-form-group label { font-size: 0.8125rem; font-weight: 500; color: #94a3b8; }
   .trips-input {
     padding: 12px 16px;
     background: rgba(255,255,255,0.04);
@@ -1518,30 +1609,12 @@ const styles = `
     color: #e2e8f0;
     font-size: 1rem;
     outline: none;
-    transition: border-color 0.2s, background 0.2s;
   }
-  .trips-input:focus {
-    border-color: #3b82f6;
-    background: rgba(255,255,255,0.06);
-  }
-  .trips-input::placeholder {
-    color: #475569;
-  }
-  .trips-amount-input-wrapper {
-    position: relative;
-    display: flex;
-    align-items: center;
-  }
-  .trips-currency {
-    position: absolute;
-    left: 16px;
-    color: #64748b;
-    font-size: 1rem;
-    font-weight: 500;
-  }
-  .trips-amount-input {
-    padding-left: 32px;
-  }
+  .trips-input:focus { border-color: #3b82f6; background: rgba(255,255,255,0.06); }
+  .trips-input::placeholder { color: #475569; }
+  .trips-amount-input-wrapper { position: relative; display: flex; align-items: center; }
+  .trips-currency { position: absolute; left: 16px; color: #64748b; font-size: 1rem; font-weight: 500; }
+  .trips-amount-input { padding-left: 32px; }
   .trips-select {
     padding: 12px 16px;
     background: rgba(255,255,255,0.04);
@@ -1551,20 +1624,14 @@ const styles = `
     font-size: 1rem;
     outline: none;
     cursor: pointer;
-    transition: border-color 0.2s;
     appearance: none;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 12px center;
     padding-right: 40px;
   }
-  .trips-select:focus {
-    border-color: #3b82f6;
-  }
-  .trips-select option {
-    background: #0d1a2d;
-    color: #e2e8f0;
-  }
+  .trips-select:focus { border-color: #3b82f6; }
+  .trips-select option { background: #0d1a2d; color: #e2e8f0; }
   .trips-split-list {
     display: flex;
     flex-direction: column;
@@ -1583,14 +1650,9 @@ const styles = `
     padding: 10px 12px;
     border-radius: 8px;
     cursor: pointer;
-    transition: background 0.2s;
   }
-  .trips-split-item:hover {
-    background: rgba(255,255,255,0.04);
-  }
-  .trips-split-item input {
-    display: none;
-  }
+  .trips-split-item:hover { background: rgba(255,255,255,0.04); }
+  .trips-split-item input { display: none; }
   .trips-split-checkbox {
     width: 20px;
     height: 20px;
@@ -1599,13 +1661,9 @@ const styles = `
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: border-color 0.2s, background 0.2s;
     flex-shrink: 0;
   }
-  .trips-split-item input:checked + .trips-split-checkbox {
-    background: #3b82f6;
-    border-color: #3b82f6;
-  }
+  .trips-split-item input:checked + .trips-split-checkbox { background: #3b82f6; border-color: #3b82f6; }
   .trips-split-item input:checked + .trips-split-checkbox::after {
     content: '';
     display: block;
@@ -1616,10 +1674,7 @@ const styles = `
     transform: rotate(45deg);
     margin-bottom: 2px;
   }
-  .trips-split-item span:last-child {
-    color: #cbd5e1;
-    font-size: 0.9375rem;
-  }
+  .trips-split-item span:last-child { color: #cbd5e1; font-size: 0.9375rem; }
   .trips-split-preview {
     font-size: 0.8125rem;
     color: #60a5fa;
@@ -1629,6 +1684,10 @@ const styles = `
     text-align: center;
   }
   .trips-submit-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
     padding: 14px 24px;
     background: linear-gradient(135deg, #3b82f6, #2563eb);
     border: none;
@@ -1637,35 +1696,45 @@ const styles = `
     font-size: 1rem;
     font-weight: 600;
     cursor: pointer;
-    transition: transform 0.2s, box-shadow 0.2s;
   }
-  .trips-submit-btn:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 24px rgba(59, 130, 246, 0.3);
+  .trips-submit-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(59, 130, 246, 0.3); }
+  .trips-submit-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+  .trips-invite-hero {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    padding: 16px 0;
+    gap: 12px;
   }
-  .trips-submit-btn:active {
-    transform: translateY(0);
+  .trips-invite-hero-icon {
+    width: 64px;
+    height: 64px;
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(59, 130, 246, 0.1));
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #60a5fa;
   }
-
-  /* Responsive */
+  .trips-invite-hero p { font-size: 0.875rem; color: #94a3b8; line-height: 1.5; max-width: 280px; margin: 0; }
+  .trips-emoji-picker { display: flex; flex-wrap: wrap; gap: 8px; }
+  .trips-emoji-btn {
+    width: 44px;
+    height: 44px;
+    background: rgba(255,255,255,0.04);
+    border: 2px solid transparent;
+    border-radius: 10px;
+    font-size: 1.25rem;
+    cursor: pointer;
+  }
+  .trips-emoji-btn:hover { background: rgba(255,255,255,0.08); }
+  .trips-emoji-btn.active { border-color: #3b82f6; background: rgba(59, 130, 246, 0.1); }
   @media (max-width: 480px) {
-    .trips-summary {
-      gap: 8px;
-      padding: 16px;
-    }
-    .trips-summary-card {
-      padding: 12px;
-    }
-    .trips-summary-amount {
-      font-size: 1.25rem;
-    }
-    .trips-content {
-      padding: 12px 16px;
-    }
-    .trips-friend-item,
-    .trips-group-item,
-    .trips-activity-item {
-      padding: 12px;
-    }
+    .trips-summary { gap: 8px; padding: 16px; }
+    .trips-summary-card { padding: 12px; }
+    .trips-summary-amount { font-size: 1.25rem; }
+    .trips-content { padding: 12px 16px; }
+    .trips-friend-item, .trips-group-item, .trips-activity-item { padding: 12px; }
   }
 `
