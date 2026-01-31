@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { supabase } from '@/lib/supabaseClient'
+import { supabase, isSupabaseConfigured } from '@/lib/supabaseClient'
 import NavCard from '@/components/NavCard'
 import AuthBox from '@/components/AuthBox'
 import type { User } from '@supabase/supabase-js'
@@ -38,8 +38,8 @@ export default function Home() {
     )
   }
 
-  // Dev bypass: show app without login (set NEXT_PUBLIC_DEV_BYPASS_AUTH=true in .env.local)
-  const devBypass = process.env.NEXT_PUBLIC_DEV_BYPASS_AUTH === 'true'
+  // Dev bypass: show app without login (auto-enabled if Supabase isn't configured)
+  const devBypass = process.env.NEXT_PUBLIC_DEV_BYPASS_AUTH === 'true' || !isSupabaseConfigured
 
   // Not logged in - show auth (unless dev bypass)
   if (!user && !devBypass) {

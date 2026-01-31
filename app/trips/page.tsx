@@ -460,7 +460,7 @@ export default function TripsPage() {
   if (!isSignedIn) {
     return (
       <div className="trips-page">
-        <style>{styles}</style>
+        <style dangerouslySetInnerHTML={{ __html: styles }} />
         <div className="trips-auth-screen">
           <div className="trips-auth-logo">💸</div>
           <h1>Trips & Splits</h1>
@@ -508,7 +508,7 @@ export default function TripsPage() {
 
   return (
     <div className="trips-page">
-      <style>{styles}</style>
+      <style dangerouslySetInnerHTML={{ __html: styles }} />
       
       {/* Toast */}
       {toast && (
@@ -1812,10 +1812,21 @@ const styles = `
     outline: none;
     cursor: pointer;
     appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right 12px center;
     padding-right: 40px;
+  }
+  .trips-select-wrapper { position: relative; }
+  .trips-select-wrapper::after {
+    content: '';
+    position: absolute;
+    right: 16px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 0;
+    height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 6px solid #64748b;
+    pointer-events: none;
   }
   .trips-select:focus { border-color: #3b82f6; }
   .trips-select option { background: #0d1a2d; color: #e2e8f0; }
