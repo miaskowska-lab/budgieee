@@ -137,7 +137,8 @@ export default function BudgetPage() {
   // Data state
   const [totalBudget, setTotalBudget] = useState(2000)
   const [categories, setCategories] = useState<BudgetCategory[]>([])
-  const [localExpenses, setLocalExpenses] = useState<BudgetExpense[]>([]) // For dev mode
+  const [allLocalExpenses, setAllLocalExpenses] = useState<BudgetExpense[]>([]) // ALL expenses across all months
+  const [allLocalCategories, setAllLocalCategories] = useState<BudgetCategory[]>([]) // ALL categories across all months
   const [dataLoading, setDataLoading] = useState(true)
   const [currentMonth, setCurrentMonth] = useState(getCurrentMonth())
   const [showMonthPicker, setShowMonthPicker] = useState(false)
@@ -176,38 +177,82 @@ export default function BudgetPage() {
     return () => subscription.unsubscribe()
   }, [])
 
-  // Load data
+  // Load data from Supabase (only used when Supabase is configured)
   const loadData = useCallback(async () => {
     if (!user && !devBypass) return
     
+    // In dev mode, don't fetch from Supabase - use local state instead
+    if (!isSupabaseConfigured) {
+      setDataLoading(false)
+      return
+    }
+    
     setDataLoading(true)
     
-    // Ensure seed data exists
+    // Ensure budget row exists for this month (creates with $0 budget, no demo data)
     await ensureBudgetSeed(currentMonth)
     
     // Fetch budget
     const { data: budgetData } = await getBudget(currentMonth)
     if (budgetData) {
       setTotalBudget(Number(budgetData.total_budget))
+    } else {
+      // New user starts with $0 budget
+      setTotalBudget(0)
     }
     
-    // Fetch categories with spent
+    // Fetch categories with spent (empty for new users)
     const { data: categoriesData, error } = await getCategoriesWithSpent(currentMonth)
     if (error) {
       console.error('Error loading categories:', error)
       showToast('Failed to load categories', 'error')
     } else if (categoriesData) {
       setCategories(categoriesData)
+    } else {
+      // New user has no categories
+      setCategories([])
     }
     
     setDataLoading(false)
   }, [user, devBypass, currentMonth, showToast])
 
+  // Initial load and when month changes (Supabase mode only)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!authLoading) {
-      loadData()
+      if (isSupabaseConfigured) {
+        loadData()
+      } else {
+        // Dev mode: just mark as loaded, data is managed by local state
+        setDataLoading(false)
+      }
     }
-  }, [authLoading, loadData])
+  }, [authLoading, currentMonth]) // loadData excluded to prevent re-creation loop
+
+  // Dev mode: update categories with spent amounts when month or local data changes
+  useEffect(() => {
+    if (!isSupabaseConfigured) {
+      // Get categories for current month
+      const monthCategories = allLocalCategories.filter(c => c.month === currentMonth)
+      
+      // Calculate spent for each category
+      const monthExpenses = allLocalExpenses.filter(e => e.month === currentMonth)
+      const categoriesWithSpent = monthCategories.map(cat => {
+        const spent = monthExpenses
+          .filter(e => e.category_id === cat.id)
+          .reduce((sum, e) => sum + e.amount, 0)
+        return { ...cat, spent }
+      })
+      
+      setCategories(categoriesWithSpent)
+    }
+  }, [currentMonth, allLocalCategories, allLocalExpenses])
+
+  // Computed: expenses for current month (from allLocalExpenses in dev mode)
+  const localExpenses = useMemo(() => 
+    allLocalExpenses.filter(e => e.month === currentMonth),
+    [allLocalExpenses, currentMonth]
+  )
 
   // Calculated values
   const totalSpent = useMemo(() => 
@@ -317,6 +362,14 @@ export default function BudgetPage() {
       c.id === categoryId ? { ...c, limit_amount: newLimit } : c
     ))
     
+    // Dev mode: also update in allLocalCategories
+    if (!isSupabaseConfigured) {
+      setAllLocalCategories(prev => prev.map(c => 
+        c.id === categoryId ? { ...c, limit_amount: newLimit } : c
+      ))
+      return
+    }
+    
     if (user) {
       const { error } = await updateCategoryBudget(categoryId, newLimit)
       if (error) {
@@ -335,7 +388,7 @@ export default function BudgetPage() {
   ) => {
     if (!user && !devBypass) return
     
-    // Dev mode: use local state
+    // Dev mode: use local state (persists across month changes)
     if (!isSupabaseConfigured) {
       const newExpense: BudgetExpense = {
         id: `exp-${Date.now()}`,
@@ -348,8 +401,9 @@ export default function BudgetPage() {
         occurred_at: date,
         created_at: new Date().toISOString(),
       }
-      setLocalExpenses(prev => [newExpense, ...prev])
-      // Update category spent
+      // Add to ALL expenses (persisted)
+      setAllLocalExpenses(prev => [newExpense, ...prev])
+      // Update category spent (will be recalculated by effect, but immediate update for UX)
       setCategories(prev => prev.map(c => 
         c.id === categoryId ? { ...c, spent: c.spent + amount } : c
       ))
@@ -370,10 +424,10 @@ export default function BudgetPage() {
   const handleDeleteExpense = useCallback(async (expenseId: string, categoryId: string, amount: number) => {
     if (!user && !devBypass) return
     
-    // Dev mode: use local state
+    // Dev mode: use local state (delete from ALL expenses)
     if (!isSupabaseConfigured) {
-      setLocalExpenses(prev => prev.filter(e => e.id !== expenseId))
-      // Update category spent
+      setAllLocalExpenses(prev => prev.filter(e => e.id !== expenseId))
+      // Update category spent (will be recalculated by effect, but immediate update for UX)
       setCategories(prev => prev.map(c => 
         c.id === categoryId ? { ...c, spent: Math.max(0, c.spent - amount) } : c
       ))
@@ -399,7 +453,7 @@ export default function BudgetPage() {
   ) => {
     if (!user && !devBypass) return
     
-    // Dev mode: use local state
+    // Dev mode: use local state (persisted across month changes)
     if (!isSupabaseConfigured) {
       const newCategory: BudgetCategory = {
         id: `cat-${Date.now()}`,
@@ -411,6 +465,9 @@ export default function BudgetPage() {
         limit_amount: limitAmount,
         spent: 0,
       }
+      // Add to ALL categories (persisted)
+      setAllLocalCategories(prev => [...prev, newCategory])
+      // Also update current view
       setCategories(prev => [...prev, newCategory])
       showToast('Category created!')
       setShowNewCategoryModal(false)
@@ -431,8 +488,10 @@ export default function BudgetPage() {
   const handleDeleteCategory = useCallback(async (categoryId: string) => {
     if (!user && !devBypass) return
     
-    // Dev mode: use local state
+    // Dev mode: use local state (delete from ALL categories and related expenses)
     if (!isSupabaseConfigured) {
+      setAllLocalCategories(prev => prev.filter(c => c.id !== categoryId))
+      setAllLocalExpenses(prev => prev.filter(e => e.category_id !== categoryId))
       setCategories(prev => prev.filter(c => c.id !== categoryId))
       setSelectedCategory(null)
       showToast('Category deleted')
@@ -456,8 +515,11 @@ export default function BudgetPage() {
   ) => {
     if (!user && !devBypass) return
     
-    // Dev mode: use local state
+    // Dev mode: use local state (update in ALL categories)
     if (!isSupabaseConfigured) {
+      setAllLocalCategories(prev => prev.map(c => 
+        c.id === categoryId ? { ...c, ...updates } : c
+      ))
       setCategories(prev => prev.map(c => 
         c.id === categoryId ? { ...c, ...updates } : c
       ))
@@ -482,26 +544,22 @@ export default function BudgetPage() {
     }
   }, [user, devBypass, showToast, selectedCategory])
 
-  // Change month
+  // Change month - categories and expenses are recalculated by the effect
   const handleMonthChange = useCallback((newMonth: string) => {
     setCurrentMonth(newMonth)
     setShowMonthPicker(false)
     // Reset view state
     setSelectedWeekIdx(0)
     setViewMode('month')
-    // In dev mode, filter expenses for the new month
-    if (!isSupabaseConfigured) {
-      setLocalExpenses(prev => prev.filter(e => e.month === newMonth))
-      // Reset spent amounts for categories (they'll be recalculated)
-      setCategories(prev => prev.map(c => ({ ...c, spent: 0 })))
-    }
+    // Note: Categories and expenses for the new month are recalculated 
+    // automatically by the useEffect that watches currentMonth
   }, [])
 
-  // Reset/Start new month - clears expenses but keeps categories with their budgets
+  // Reset/Start new month - clears current month's expenses but keeps categories
   const handleResetBudget = useCallback(() => {
-    // In dev mode: clear expenses, reset category spent to 0
+    // In dev mode: clear only current month's expenses
     if (!isSupabaseConfigured) {
-      setLocalExpenses([])
+      setAllLocalExpenses(prev => prev.filter(e => e.month !== currentMonth))
       setCategories(prev => prev.map(c => ({ ...c, spent: 0 })))
       showToast('Budget reset! Start fresh.')
       setShowResetConfirm(false)
@@ -512,7 +570,7 @@ export default function BudgetPage() {
     loadData()
     showToast('Budget refreshed!')
     setShowResetConfirm(false)
-  }, [loadData, showToast])
+  }, [loadData, showToast, currentMonth])
 
   // Loading state
   if (authLoading) {

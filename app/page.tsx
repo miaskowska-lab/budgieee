@@ -37,12 +37,14 @@ export default function Home() {
     budget: false,
   })
 
-  // Real stats from Supabase
+  // Real stats from Supabase (via get_home_dashboard RPC)
   const [stats, setStats] = useState({
     communityPoints: 0,
     dealsPosted: 0,
     savedDeals: 0,
     tripsNet: 0,
+    budgetTotal: 0,
+    budgetSpent: 0,
   })
   const [statsLoading, setStatsLoading] = useState(false)
   const [statsError, setStatsError] = useState<string | null>(null)
@@ -67,7 +69,7 @@ export default function Home() {
     localStorage.setItem('budgieee-settings', JSON.stringify(settings))
   }
 
-  // Fetch stats from Supabase
+  // Fetch stats from Supabase via get_home_dashboard RPC
   const loadStats = useCallback(async (userId: string) => {
     if (!isSupabaseConfigured) return
     
@@ -81,6 +83,8 @@ export default function Home() {
       dealsPosted: result.dealsPosted,
       savedDeals: result.savedDeals,
       tripsNet: result.tripsNet,
+      budgetTotal: result.budgetTotal || 0,
+      budgetSpent: result.budgetSpent || 0,
     })
     setStatsError(result.error)
     setStatsLoading(false)

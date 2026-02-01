@@ -103,7 +103,8 @@ function getAvatarColor(id: string): string {
 }
 
 // ============================================
-// MOCK DATA - Initial seed data
+// DEV MODE USER - Used when Supabase not configured
+// New users start BLANK - no fake friends/groups/expenses
 // ============================================
 const MOCK_USER: Profile = {
   user_id: 'me-123',
@@ -111,104 +112,6 @@ const MOCK_USER: Profile = {
   full_name: 'You',
   avatar_url: null,
 }
-
-const INITIAL_FRIENDS: Friend[] = [
-  {
-    user_id: 'friend-1',
-    email: 'alex@example.com',
-    full_name: 'Alex Chen',
-    avatar_url: null,
-    friendship_id: 'fs-1',
-    status: 'accepted',
-  },
-  {
-    user_id: 'friend-2',
-    email: 'sam@example.com',
-    full_name: 'Sam Wilson',
-    avatar_url: null,
-    friendship_id: 'fs-2',
-    status: 'accepted',
-  },
-  {
-    user_id: 'friend-3',
-    email: 'jordan@example.com',
-    full_name: 'Jordan Lee',
-    avatar_url: null,
-    friendship_id: 'fs-3',
-    status: 'accepted',
-  },
-]
-
-const INITIAL_GROUPS: Group[] = [
-  {
-    id: 'group-1',
-    name: 'Bali Trip 2026',
-    emoji: '🏝️',
-    owner_id: 'me-123',
-    members: [
-      { user_id: 'me-123', role: 'owner', profile: MOCK_USER },
-      { user_id: 'friend-1', role: 'member', profile: INITIAL_FRIENDS[0] },
-      { user_id: 'friend-2', role: 'member', profile: INITIAL_FRIENDS[1] },
-    ],
-  },
-  {
-    id: 'group-2',
-    name: 'Roommates',
-    emoji: '🏠',
-    owner_id: 'me-123',
-    members: [
-      { user_id: 'me-123', role: 'owner', profile: MOCK_USER },
-      { user_id: 'friend-3', role: 'member', profile: INITIAL_FRIENDS[2] },
-    ],
-  },
-]
-
-const INITIAL_EXPENSES: Expense[] = [
-  {
-    id: 'exp-1',
-    description: 'Dinner at Thai Place',
-    amount: 85.50,
-    currency: 'USD',
-    paid_by: 'me-123',
-    group_id: 'group-1',
-    created_by: 'me-123',
-    created_at: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
-    splits: [
-      { id: 'sp-1', user_id: 'me-123', share: 28.50 },
-      { id: 'sp-2', user_id: 'friend-1', share: 28.50 },
-      { id: 'sp-3', user_id: 'friend-2', share: 28.50 },
-    ],
-  },
-  {
-    id: 'exp-2',
-    description: 'Uber to airport',
-    amount: 45.00,
-    currency: 'USD',
-    paid_by: 'friend-1',
-    group_id: 'group-1',
-    created_by: 'friend-1',
-    created_at: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
-    splits: [
-      { id: 'sp-4', user_id: 'me-123', share: 15.00 },
-      { id: 'sp-5', user_id: 'friend-1', share: 15.00 },
-      { id: 'sp-6', user_id: 'friend-2', share: 15.00 },
-    ],
-  },
-  {
-    id: 'exp-3',
-    description: 'Groceries',
-    amount: 120.00,
-    currency: 'USD',
-    paid_by: 'me-123',
-    group_id: 'group-2',
-    created_by: 'me-123',
-    created_at: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
-    splits: [
-      { id: 'sp-7', user_id: 'me-123', share: 60.00 },
-      { id: 'sp-8', user_id: 'friend-3', share: 60.00 },
-    ],
-  },
-]
 
 // ============ Main Component ============
 export default function TripsPage() {
@@ -218,10 +121,10 @@ export default function TripsPage() {
   const [signingIn, setSigningIn] = useState(false)
   const [signInEmail, setSignInEmail] = useState('')
 
-  // Data state (local/in-memory)
-  const [friends, setFriends] = useState<Friend[]>(INITIAL_FRIENDS)
-  const [groups, setGroups] = useState<Group[]>(INITIAL_GROUPS)
-  const [expenses, setExpenses] = useState<Expense[]>(INITIAL_EXPENSES)
+  // Data state (local/in-memory) - starts BLANK for new users
+  const [friends, setFriends] = useState<Friend[]>([])
+  const [groups, setGroups] = useState<Group[]>([])
+  const [expenses, setExpenses] = useState<Expense[]>([])
   const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([])
 
   // UI state
@@ -498,8 +401,8 @@ export default function TripsPage() {
           </div>
 
           <p className="trips-auth-note">
-            This is a demo with mock data.<br/>
-            Real Supabase auth will be connected later.
+            Dev mode: data is stored locally.<br/>
+            Connect Supabase for real persistence.
           </p>
         </div>
       </div>

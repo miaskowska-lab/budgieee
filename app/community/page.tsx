@@ -66,130 +66,20 @@ const MOCK_USER = {
   avatar_color: '#6366f1',
 }
 
+// Available communities to discover/join (pre-existing public communities)
 const INITIAL_COMMUNITIES: Community[] = [
   { id: 'sf', name: 'Minerva San Francisco', emoji: '🌉', kind: 'city', image_url: 'https://images.unsplash.com/photo-1501594907352-04cda38ebc29?w=400&h=200&fit=crop', member_count: 156 },
   { id: 'ba', name: 'Minerva Buenos Aires', emoji: '🇦🇷', kind: 'city', image_url: 'https://images.unsplash.com/photo-1589909202802-8f4aadce1849?w=400&h=200&fit=crop', member_count: 142 },
   { id: 'hyd', name: 'Minerva Hyderabad', emoji: '🇮🇳', kind: 'city', image_url: 'https://images.unsplash.com/photo-1572252009286-268acec5ca0a?w=400&h=200&fit=crop', member_count: 138 },
   { id: 'tok', name: 'Minerva Tokyo', emoji: '🇯🇵', kind: 'city', image_url: 'https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?w=400&h=200&fit=crop', member_count: 145 },
   { id: 'ber', name: 'Minerva Berlin', emoji: '🇩🇪', kind: 'city', image_url: 'https://images.unsplash.com/photo-1560969184-10fe8719e047?w=400&h=200&fit=crop', member_count: 151 },
-  { id: 'personal', name: 'Personal Friends', emoji: '👥', kind: 'private', image_url: null, member_count: 5 },
+  { id: 'personal', name: 'Personal Friends', emoji: '👥', kind: 'private', image_url: null, member_count: 0 },
 ]
 
-const INITIAL_POSTS: Post[] = [
-  {
-    post_id: 'post-1',
-    community_id: 'sf',
-    title: 'IKEA Veggie Meatballs Deal',
-    body: 'Veggie meatballs is only $3 on every Monday at IKEA Emeryville! The portion is huge and perfect for students on a budget.',
-    tag: 'Food',
-    tag_color: '#059669',
-    image_url: 'https://images.unsplash.com/photo-1529042410759-befb1204b468?w=600&h=400&fit=crop',
-    created_at: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
-    author_id: 'user-1',
-    author_name: 'Sarah Chen',
-    author_avatar_color: '#8b5cf6',
-    like_count: 47,
-    comment_count: 12,
-    liked_by_me: false,
-    bookmarked_by_me: true,
-    community_name: 'Minerva San Francisco',
-    community_emoji: '🌉',
-  },
-  {
-    post_id: 'post-2',
-    community_id: 'sf',
-    title: 'Free cookies at Turk St cafe!',
-    body: 'The new cafe on Turk Street gives free cookies to anyone who mentions Minerva. Open until 6pm!',
-    tag: 'Food',
-    tag_color: '#f97316',
-    image_url: null,
-    created_at: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
-    author_id: 'user-2',
-    author_name: 'Marcus Johnson',
-    author_avatar_color: '#ec4899',
-    like_count: 83,
-    comment_count: 24,
-    liked_by_me: true,
-    bookmarked_by_me: false,
-    community_name: 'Minerva San Francisco',
-    community_emoji: '🌉',
-  },
-  {
-    post_id: 'post-3',
-    community_id: 'ba',
-    title: 'Best empanadas in Palermo',
-    body: 'Found the best empanadas at this tiny spot on Guatemala street. 500 pesos each and they are massive. Cash only!',
-    tag: 'Food',
-    tag_color: '#f97316',
-    image_url: 'https://images.unsplash.com/photo-1604467794349-0b74285de7e7?w=600&h=400&fit=crop',
-    created_at: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
-    author_id: 'user-3',
-    author_name: 'Luis Hernandez',
-    author_avatar_color: '#14b8a6',
-    like_count: 34,
-    comment_count: 7,
-    liked_by_me: false,
-    bookmarked_by_me: false,
-    community_name: 'Minerva Buenos Aires',
-    community_emoji: '🇦🇷',
-  },
-  {
-    post_id: 'post-4',
-    community_id: 'tok',
-    title: 'Cheap ramen in Shibuya',
-    body: 'Fuunji near Shibuya station has amazing tsukemen for only ¥850. Usually ramen places are ¥1200+. Go early!',
-    tag: 'Food',
-    tag_color: '#ef4444',
-    image_url: 'https://images.unsplash.com/photo-1569718212165-3a8278d5f624?w=600&h=400&fit=crop',
-    created_at: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),
-    author_id: 'user-4',
-    author_name: 'Yuki Tanaka',
-    author_avatar_color: '#06b6d4',
-    like_count: 45,
-    comment_count: 8,
-    liked_by_me: false,
-    bookmarked_by_me: false,
-    community_name: 'Minerva Tokyo',
-    community_emoji: '🇯🇵',
-  },
-  {
-    post_id: 'post-5',
-    community_id: 'ber',
-    title: 'Döner ranking - Imren Grill wins',
-    body: 'Mustafas is overrated. Go to Imren Grill in Kreuzberg instead. Same quality, no 45 min wait.',
-    tag: 'Food',
-    tag_color: '#f97316',
-    image_url: null,
-    created_at: new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString(),
-    author_id: 'user-5',
-    author_name: 'Emma Davis',
-    author_avatar_color: '#10b981',
-    like_count: 123,
-    comment_count: 56,
-    liked_by_me: false,
-    bookmarked_by_me: false,
-    community_name: 'Minerva Berlin',
-    community_emoji: '🇩🇪',
-  },
-]
-
-const INITIAL_COMMENTS: Record<string, Comment[]> = {
-  'post-1': [
-    { comment_id: 'c1', body: 'This is amazing! Going there tomorrow 🙌', created_at: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(), author_id: 'user-2', author_name: 'Marcus Johnson', author_avatar_color: '#ec4899' },
-    { comment_id: 'c2', body: 'Do they still have it? Want to confirm before going', created_at: new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString(), author_id: 'user-4', author_name: 'Yuki Tanaka', author_avatar_color: '#06b6d4' },
-  ],
-  'post-2': [
-    { comment_id: 'c3', body: 'Can confirm! Went yesterday and it was so good', created_at: new Date(Date.now() - 8 * 60 * 60 * 1000).toISOString(), author_id: 'user-1', author_name: 'Sarah Chen', author_avatar_color: '#8b5cf6' },
-  ],
-}
-
-const INITIAL_FRIENDS: Friend[] = [
-  { id: 'user-1', name: 'Sarah Chen', email: 'sarah@minerva.edu', avatar_color: '#8b5cf6', is_member: true },
-  { id: 'user-2', name: 'Marcus Johnson', email: 'marcus@minerva.edu', avatar_color: '#ec4899', is_member: true },
-  { id: 'user-3', name: 'Luis Hernandez', email: 'luis@minerva.edu', avatar_color: '#14b8a6', is_member: true },
-  { id: 'user-4', name: 'Yuki Tanaka', email: 'yuki@minerva.edu', avatar_color: '#06b6d4', is_member: false },
-  { id: 'user-5', name: 'Emma Davis', email: 'emma@minerva.edu', avatar_color: '#10b981', is_member: false },
-]
+// New users start BLANK - no fake posts, comments, or friends
+const INITIAL_POSTS: Post[] = []
+const INITIAL_COMMENTS: Record<string, Comment[]> = {}
+const INITIAL_FRIENDS: Friend[] = []
 
 // ============ Utility Functions ============
 function generateId(): string {
