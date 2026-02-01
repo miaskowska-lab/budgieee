@@ -1,6 +1,13 @@
 // ============================================
 // Community Deals - Data Repository
 // Client-side Supabase queries for Community feature
+// 
+// USER DATA OWNERSHIP:
+// User-specific data (likes, bookmarks, posts) use auth.uid().
+// When RLS is enabled, add policies like:
+//   CREATE POLICY "Users can manage own likes"
+//   ON post_likes FOR ALL
+//   USING (user_id = auth.uid());
 // ============================================
 
 import { supabase, isSupabaseConfigured } from './supabaseClient'

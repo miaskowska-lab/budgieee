@@ -2,6 +2,9 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+import { useSession, isDevBypassEnabled } from '@/lib/useSession'
+import { isUserAuthenticated, getLoginRedirectPath } from '@/lib/authGuard'
 
 // ============================================
 // COMMUNITY DEALS - Budgieee
@@ -107,6 +110,16 @@ function getInitials(name: string): string {
 
 // ============ Main Component ============
 export default function CommunityPage() {
+  const router = useRouter()
+  const { user: authUser, loading: authLoading, isAuthenticated } = useSession()
+  
+  // Redirect to login if not authenticated (and not in dev bypass mode)
+  useEffect(() => {
+    if (!authLoading && !isAuthenticated) {
+      router.push(getLoginRedirectPath())
+    }
+  }, [authLoading, isAuthenticated, router])
+  
   // View state
   const [viewMode, setViewMode] = useState<'portal' | 'feed' | 'saved'>('portal')
   const [selectedCommunityId, setSelectedCommunityId] = useState<string | null>(null)

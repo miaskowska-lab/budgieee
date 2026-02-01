@@ -2,8 +2,11 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts'
 import { supabase, isSupabaseConfigured } from '@/lib/supabaseClient'
+import { useSession, isDevBypassEnabled } from '@/lib/useSession'
+import { isUserAuthenticated, getLoginRedirectPath } from '@/lib/authGuard'
 import {
   ensureBudgetSeed,
   getBudget,
@@ -131,8 +134,15 @@ const CustomTooltip = ({ active, payload }: any) => {
 
 // ============ Main Component ============
 export default function BudgetPage() {
-  const [user, setUser] = useState<User | null>(null)
-  const [authLoading, setAuthLoading] = useState(true)
+  const router = useRouter()
+  const { user, loading: authLoading, isAuthenticated } = useSession()
+  
+  // Redirect to login if not authenticated (and not in dev bypass mode)
+  useEffect(() => {
+    if (!authLoading && !isAuthenticated) {
+      router.push(getLoginRedirectPath())
+    }
+  }, [authLoading, isAuthenticated, router])
   
   // Data state
   const [totalBudget, setTotalBudget] = useState(0) // Starts at $0, user sets their own
@@ -154,27 +164,13 @@ export default function BudgetPage() {
   const [viewMode, setViewMode] = useState<'month' | 'week'>('month')
   const [selectedWeekIdx, setSelectedWeekIdx] = useState(0)
 
-  // Dev bypass
-  const devBypass = process.env.NEXT_PUBLIC_DEV_BYPASS_AUTH === 'true' || !isSupabaseConfigured
+  // Dev bypass - use imported constant
+  const devBypass = isDevBypassEnabled
 
   // Show toast
   const showToast = useCallback((message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type })
     setTimeout(() => setToast(null), 3000)
-  }, [])
-
-  // Auth check
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null)
-      setAuthLoading(false)
-    })
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null)
-    })
-
-    return () => subscription.unsubscribe()
   }, [])
 
   // Load data from Supabase (only used when Supabase is configured)

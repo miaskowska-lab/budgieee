@@ -3,6 +3,9 @@ import { supabase, isSupabaseConfigured } from './supabaseClient'
 // ============================================
 // BUDGET REPOSITORY
 // Queries for Life Budget feature
+// 
+// All operations use direct table queries with RLS.
+// RLS policies enforce: user_id = auth.uid()
 // ============================================
 
 export interface BudgetCategory {
@@ -13,7 +16,7 @@ export interface BudgetCategory {
   emoji: string
   color: string
   limit_amount: number
-  spent: number // computed
+  spent: number // computed client-side
 }
 
 export interface BudgetExpense {
@@ -41,12 +44,35 @@ export function getCurrentMonth(): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
 }
 
-// Ensure budget is seeded with default categories
+// Ensure budget exists for month (creates if not exists)
 export async function ensureBudgetSeed(month: string = getCurrentMonth()) {
   if (!isSupabaseConfigured) return { error: null }
   
-  const { error } = await supabase.rpc('ensure_budget_seed', { p_month: month })
-  return { error }
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: { message: 'Not authenticated' } }
+  
+  // Check if budget exists
+  const { data: existing } = await supabase
+    .from('budgets')
+    .select('id')
+    .eq('month', month)
+    .single()
+  
+  // If no budget exists, create one with $0
+  if (!existing) {
+    const { error } = await supabase
+      .from('budgets')
+      .insert({
+        user_id: user.id,
+        month,
+        total_budget: 0,
+      })
+    if (error && error.code !== '23505') { // Ignore unique constraint violations
+      return { error }
+    }
+  }
+  
+  return { error: null }
 }
 
 // Get budget for a month
@@ -57,7 +83,7 @@ export async function getBudget(month: string = getCurrentMonth()): Promise<{ da
     .from('budgets')
     .select('*')
     .eq('month', month)
-    .single()
+    .maybeSingle() // Use maybeSingle to avoid error if not found
   
   return { data, error }
 }
@@ -113,7 +139,7 @@ export async function getCategoryExpenses(categoryId: string): Promise<{ data: B
   return { data, error }
 }
 
-// Add expense
+// Add expense - uses direct insert instead of RPC
 export async function addExpense(
   categoryId: string,
   title: string,
@@ -123,50 +149,105 @@ export async function addExpense(
 ): Promise<{ data: BudgetExpense | null; error: any }> {
   if (!isSupabaseConfigured) return { data: null, error: { message: 'Supabase not configured' } }
   
-  const { data, error } = await supabase.rpc('add_budget_expense', {
-    p_category_id: categoryId,
-    p_title: title,
-    p_amount: amount,
-    p_occurred_at: occurredAt,
-    p_note: note || null,
-  })
+  // Get current user
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { data: null, error: { message: 'Not authenticated' } }
+  
+  // Get the category to find its month
+  const { data: category, error: catError } = await supabase
+    .from('budget_categories')
+    .select('month')
+    .eq('id', categoryId)
+    .single()
+  
+  if (catError || !category) {
+    return { data: null, error: catError || { message: 'Category not found' } }
+  }
+  
+  // Parse the occurred_at date to just the date part
+  const occurredDate = occurredAt.split('T')[0]
+  
+  // Insert the expense
+  const { data, error } = await supabase
+    .from('budget_expenses')
+    .insert({
+      user_id: user.id,
+      category_id: categoryId,
+      month: category.month,
+      title,
+      amount,
+      note: note || null,
+      occurred_at: occurredDate,
+    })
+    .select()
+    .single()
   
   return { data, error }
 }
 
-// Delete expense
+// Delete expense - uses direct delete instead of RPC
 export async function deleteExpense(expenseId: string): Promise<{ success: boolean; error: any }> {
   if (!isSupabaseConfigured) return { success: false, error: { message: 'Supabase not configured' } }
   
-  const { data, error } = await supabase.rpc('delete_budget_expense', {
-    p_expense_id: expenseId,
-  })
+  const { error } = await supabase
+    .from('budget_expenses')
+    .delete()
+    .eq('id', expenseId)
   
-  return { success: !!data, error }
+  return { success: !error, error }
 }
 
-// Update category budget
+// Update category budget - uses direct update instead of RPC
 export async function updateCategoryBudget(categoryId: string, limitAmount: number): Promise<{ data: BudgetCategory | null; error: any }> {
   if (!isSupabaseConfigured) return { data: null, error: { message: 'Supabase not configured' } }
   
-  const { data, error } = await supabase.rpc('update_category_budget', {
-    p_category_id: categoryId,
-    p_limit_amount: limitAmount,
-  })
+  const { data, error } = await supabase
+    .from('budget_categories')
+    .update({ limit_amount: limitAmount })
+    .eq('id', categoryId)
+    .select()
+    .single()
   
-  return { data, error }
+  return { data: data ? { ...data, spent: 0 } : null, error }
 }
 
-// Update total budget
+// Update total budget - uses direct upsert instead of RPC
 export async function updateTotalBudget(month: string, totalBudget: number): Promise<{ data: Budget | null; error: any }> {
   if (!isSupabaseConfigured) return { data: null, error: { message: 'Supabase not configured' } }
   
-  const { data, error } = await supabase.rpc('update_total_budget', {
-    p_month: month,
-    p_total_budget: totalBudget,
-  })
+  // Get current user
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { data: null, error: { message: 'Not authenticated' } }
   
-  return { data, error }
+  // Try to update existing budget first
+  const { data: existing } = await supabase
+    .from('budgets')
+    .select('id')
+    .eq('month', month)
+    .single()
+  
+  if (existing) {
+    // Update existing
+    const { data, error } = await supabase
+      .from('budgets')
+      .update({ total_budget: totalBudget })
+      .eq('month', month)
+      .select()
+      .single()
+    return { data, error }
+  } else {
+    // Insert new
+    const { data, error } = await supabase
+      .from('budgets')
+      .insert({
+        user_id: user.id,
+        month,
+        total_budget: totalBudget,
+      })
+      .select()
+      .single()
+    return { data, error }
+  }
 }
 
 // Create a new category
@@ -198,7 +279,7 @@ export async function createCategory(
   return { data: data ? { ...data, spent: 0 } : null, error }
 }
 
-// Delete a category (and all its expenses)
+// Delete a category (and all its expenses via cascade)
 export async function deleteCategory(categoryId: string): Promise<{ success: boolean; error: any }> {
   if (!isSupabaseConfigured) return { success: false, error: { message: 'Supabase not configured' } }
   

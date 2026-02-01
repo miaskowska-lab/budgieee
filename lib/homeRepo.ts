@@ -4,6 +4,11 @@ import { supabase, isSupabaseConfigured } from './supabaseClient'
 // HOME PAGE - Data Repository
 // Uses get_home_dashboard RPC for efficient stats loading
 // All stats are persisted in user_stats table via triggers
+// 
+// USER DATA OWNERSHIP:
+// All stats are user-specific. The RPC uses auth.uid() to
+// fetch only the current user's data. When RLS is enabled,
+// policies enforce user_id = auth.uid() on all tables.
 // ============================================
 
 export interface HomeDashboard {

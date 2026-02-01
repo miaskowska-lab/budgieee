@@ -2,7 +2,9 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { supabase, isSupabaseConfigured } from '@/lib/supabaseClient'
+import { useSession, isDevBypassEnabled } from '@/lib/useSession'
 import { fetchAllHomeStats } from '@/lib/homeRepo'
 import type { User } from '@supabase/supabase-js'
 
@@ -21,8 +23,7 @@ const AVATAR_COLORS = [
 
 export default function Home() {
   const router = useRouter()
-  const [user, setUser] = useState<User | null>(null)
-  const [loading, setLoading] = useState(true)
+  const { user, loading, isAuthenticated } = useSession()
   const [showUserPanel, setShowUserPanel] = useState(false)
   const [panelView, setPanelView] = useState<'account' | 'settings'>('account')
   const [signingOut, setSigningOut] = useState(false)
@@ -90,30 +91,12 @@ export default function Home() {
     setStatsLoading(false)
   }, [])
 
+  // Load stats when user is authenticated
   useEffect(() => {
-    // Check current session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null)
-      setLoading(false)
-      
-      // Load stats if user is logged in
-      if (session?.user) {
-        loadStats(session.user.id)
-      }
-    })
-
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null)
-      
-      // Load stats when user logs in
-      if (session?.user) {
-        loadStats(session.user.id)
-      }
-    })
-
-    return () => subscription.unsubscribe()
-  }, [loadStats])
+    if (user?.id && !isDevBypassEnabled) {
+      loadStats(user.id)
+    }
+  }, [user?.id, loadStats])
 
   const handleSignOut = async () => {
     setSigningOut(true)
@@ -123,8 +106,8 @@ export default function Home() {
   }
 
   // Dev bypass: show app without login
-  const devBypass = process.env.NEXT_PUBLIC_DEV_BYPASS_AUTH === 'true' || !isSupabaseConfigured
-  const isLoggedIn = user || devBypass
+  const devBypass = isDevBypassEnabled
+  const isLoggedIn = isAuthenticated
 
   // Get user initials
   const getUserInitials = () => {
@@ -204,7 +187,11 @@ export default function Home() {
       {/* ============ AUTH BOX (Not logged in) ============ */}
       {!isLoggedIn && (
         <div className="home-auth-section">
-          <AuthBox />
+          <Link href="/login" className="home-login-link">
+            <button type="button" className="home-login-btn">
+              Sign in to continue
+            </button>
+          </Link>
         </div>
       )}
 
@@ -575,52 +562,6 @@ export default function Home() {
   )
 }
 
-// ============ Auth Box Component (inline for simplicity) ============
-function AuthBox() {
-  const [email, setEmail] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [message, setMessage] = useState('')
-
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!email.trim()) return
-
-    setLoading(true)
-    setMessage('')
-
-    const { error } = await supabase.auth.signInWithOtp({
-      email: email.trim(),
-      options: {
-        emailRedirectTo: window.location.origin,
-      },
-    })
-
-    if (error) {
-      setMessage(error.message)
-    } else {
-      setMessage('Check your email for the login link!')
-    }
-    setLoading(false)
-  }
-
-  return (
-    <form onSubmit={handleLogin} className="home-auth-box">
-      <input
-        type="email"
-        placeholder="Enter your email"
-        value={email}
-        onChange={(e) => setEmail(e.target.value)}
-        className="home-auth-input"
-        disabled={loading}
-      />
-      <button type="submit" className="home-auth-btn" disabled={loading || !email.trim()}>
-        {loading ? 'Sending...' : 'Sign in with Email'}
-      </button>
-      {message && <p className="home-auth-message">{message}</p>}
-    </form>
-  )
-}
-
 // ============ Styles ============
 const styles = `
   .home-page {
@@ -783,6 +724,26 @@ const styles = `
     color: #60a5fa;
     text-align: center;
     margin: 8px 0 0 0;
+  }
+  .home-login-link {
+    text-decoration: none;
+    display: block;
+  }
+  .home-login-btn {
+    width: 100%;
+    padding: 16px 24px;
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    border: none;
+    border-radius: 14px;
+    color: white;
+    font-size: 1.0625rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .home-login-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(59, 130, 246, 0.3);
   }
 
   /* ============ FEATURE CARDS ============ */

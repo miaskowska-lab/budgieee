@@ -2,6 +2,9 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+import { useSession, isDevBypassEnabled } from '@/lib/useSession'
+import { isUserAuthenticated, getLoginRedirectPath } from '@/lib/authGuard'
 
 // ============================================
 // STUB BACKEND - Works without Supabase
@@ -115,7 +118,17 @@ const MOCK_USER: Profile = {
 
 // ============ Main Component ============
 export default function TripsPage() {
-  // Fake auth state - always "logged in" with mock user (skip sign-in screen for now)
+  const router = useRouter()
+  const { user: authUser, loading: authLoading, isAuthenticated } = useSession()
+  
+  // Redirect to login if not authenticated (and not in dev bypass mode)
+  useEffect(() => {
+    if (!authLoading && !isAuthenticated) {
+      router.push(getLoginRedirectPath())
+    }
+  }, [authLoading, isAuthenticated, router])
+  
+  // Use mock user for local data operations (trips page uses local state)
   const [user] = useState(MOCK_USER)
   const [isSignedIn, setIsSignedIn] = useState(true)
   const [signingIn, setSigningIn] = useState(false)
