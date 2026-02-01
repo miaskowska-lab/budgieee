@@ -21,6 +21,7 @@ import {
   createCategory,
   deleteCategory,
   updateCategory,
+  resetMonthExpenses,
   type BudgetCategory,
   type BudgetExpense,
 } from '@/lib/budgetRepo'
@@ -171,6 +172,7 @@ export default function BudgetPage() {
   const [currentMonth, setCurrentMonth] = useState(getCurrentMonth())
   const [showMonthPicker, setShowMonthPicker] = useState(false)
   const [showResetConfirm, setShowResetConfirm] = useState(false)
+  const [resetting, setResetting] = useState(false)
   
   // UI state
   const [showAddModal, setShowAddModal] = useState(false)
@@ -676,20 +678,45 @@ export default function BudgetPage() {
   }, [])
 
   // Reset/Start new month - clears current month's expenses but keeps categories
-  const handleResetBudget = useCallback(() => {
-    // In dev mode: clear only current month's expenses
-    if (!isSupabaseConfigured) {
-      setAllLocalExpenses(prev => prev.filter(e => e.month !== currentMonth))
-      setCategories(prev => prev.map(c => ({ ...c, spent: 0 })))
-      showToast('Budget reset! Start fresh.')
-      setShowResetConfirm(false)
-      return
-    }
+  const handleResetBudget = useCallback(async () => {
+    setResetting(true)
     
-    // With Supabase: just reload data for current month (expenses are per-month anyway)
-    loadData()
-    showToast('Budget refreshed!')
-    setShowResetConfirm(false)
+    try {
+      // In dev mode: clear only current month's expenses
+      if (!isSupabaseConfigured) {
+        setAllLocalExpenses(prev => prev.filter(e => e.month !== currentMonth))
+        setCategories(prev => prev.map(c => ({ ...c, spent: 0 })))
+        setMonthExpenses([])
+        showToast('Budget reset! Start fresh.')
+        setShowResetConfirm(false)
+        setResetting(false)
+        return
+      }
+      
+      // With Supabase: delete all expenses for the current month
+      const { success, deletedCount, error } = await resetMonthExpenses(currentMonth)
+      
+      if (error || !success) {
+        showToast(error?.message || 'Failed to reset budget', 'error')
+        setResetting(false)
+        return
+      }
+      
+      // Clear local state immediately for responsive UI
+      setMonthExpenses([])
+      setCategories(prev => prev.map(c => ({ ...c, spent: 0 })))
+      
+      // Reload data to ensure consistency
+      await loadData()
+      
+      showToast(`Budget reset! ${deletedCount} expense${deletedCount !== 1 ? 's' : ''} cleared.`)
+      setShowResetConfirm(false)
+    } catch (err) {
+      console.error('Reset budget error:', err)
+      showToast('An error occurred while resetting', 'error')
+    } finally {
+      setResetting(false)
+    }
   }, [loadData, showToast, currentMonth])
 
   // Loading state
@@ -826,14 +853,16 @@ export default function BudgetPage() {
               <button 
                 className="budget-cancel-btn"
                 onClick={() => setShowResetConfirm(false)}
+                disabled={resetting}
               >
                 Cancel
               </button>
               <button 
                 className="budget-confirm-reset-btn"
                 onClick={handleResetBudget}
+                disabled={resetting}
               >
-                Reset Budget
+                {resetting ? 'Resetting...' : 'Reset Budget'}
               </button>
             </div>
           </div>

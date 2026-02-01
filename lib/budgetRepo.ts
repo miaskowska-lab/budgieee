@@ -307,3 +307,27 @@ export async function updateCategory(
   
   return { data, error }
 }
+
+// Reset month expenses - deletes all expenses for a given month
+export async function resetMonthExpenses(month: string): Promise<{ success: boolean; deletedCount: number; error: any }> {
+  if (!isSupabaseConfigured) return { success: false, deletedCount: 0, error: { message: 'Supabase not configured' } }
+  
+  // Get current user
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { success: false, deletedCount: 0, error: { message: 'Not authenticated' } }
+  
+  // Delete all expenses for this month
+  // The month column stores the first day of the month (e.g., '2026-02-01')
+  const { data, error } = await supabase
+    .from('budget_expenses')
+    .delete()
+    .eq('user_id', user.id)
+    .eq('month', month)
+    .select('id') // Return deleted rows to count them
+  
+  if (error) {
+    return { success: false, deletedCount: 0, error }
+  }
+  
+  return { success: true, deletedCount: data?.length || 0, error: null }
+}

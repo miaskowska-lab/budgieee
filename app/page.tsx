@@ -7,6 +7,7 @@ import { supabase, isSupabaseConfigured } from '@/lib/supabaseClient'
 import { useSession, isDevBypassEnabled } from '@/lib/useSession'
 import { fetchAllHomeStats } from '@/lib/homeRepo'
 import { useNavVisibility } from '@/components/BottomNav'
+import { getUserSettings, updateUserSettings } from '@/lib/userSettings'
 import type { User } from '@supabase/supabase-js'
 
 // ============================================
@@ -57,8 +58,9 @@ export default function Home() {
   const [statsLoading, setStatsLoading] = useState(false)
   const [statsError, setStatsError] = useState<string | null>(null)
 
-  // Load settings from localStorage
+  // Load settings from localStorage + Supabase
   useEffect(() => {
+    // Load local settings (display name, avatar, currency)
     const savedSettings = localStorage.getItem('budgieee-settings')
     if (savedSettings) {
       try {
@@ -66,16 +68,56 @@ export default function Home() {
         if (parsed.displayName) setDisplayName(parsed.displayName)
         if (parsed.avatarColor) setAvatarColor(parsed.avatarColor)
         if (parsed.currency) setCurrency(parsed.currency)
+        // Also load notifications from localStorage as fallback
         if (parsed.notifications) setNotifications(parsed.notifications)
       } catch {}
     }
+    
+    // Load notification settings from Supabase (if configured)
+    if (isSupabaseConfigured) {
+      getUserSettings().then(({ data }) => {
+        if (data) {
+          setNotifications({
+            deals: data.notif_community,
+            splits: data.notif_trips,
+            budget: data.notif_budget,
+          })
+        }
+      })
+    }
   }, [])
 
-  // Save settings to localStorage
-  const saveSettings = () => {
+  // Save local settings to localStorage (display name, avatar, currency)
+  const saveLocalSettings = useCallback(() => {
     const settings = { displayName, avatarColor, currency, notifications }
     localStorage.setItem('budgieee-settings', JSON.stringify(settings))
-  }
+  }, [displayName, avatarColor, currency, notifications])
+
+  // Save notification settings to Supabase
+  const saveNotificationSetting = useCallback(async (
+    key: 'deals' | 'splits' | 'budget',
+    value: boolean
+  ) => {
+    // Update local state immediately
+    setNotifications(prev => ({ ...prev, [key]: value }))
+    
+    // Map frontend keys to backend keys
+    const backendKey = key === 'deals' ? 'notif_community' 
+      : key === 'splits' ? 'notif_trips' 
+      : 'notif_budget'
+    
+    // Save to Supabase
+    const { error } = await updateUserSettings({ [backendKey]: value })
+    if (error) {
+      console.error('Failed to save notification setting:', error)
+    }
+    
+    // Also update localStorage for offline access
+    const savedSettings = localStorage.getItem('budgieee-settings')
+    const current = savedSettings ? JSON.parse(savedSettings) : {}
+    current.notifications = { ...current.notifications, [key]: value }
+    localStorage.setItem('budgieee-settings', JSON.stringify(current))
+  }, [])
 
   // Fetch stats from Supabase via get_home_dashboard RPC
   const loadStats = useCallback(async (userId: string) => {
@@ -412,7 +454,7 @@ export default function Home() {
                         type="text"
                         value={displayName}
                         onChange={(e) => setDisplayName(e.target.value)}
-                        onBlur={saveSettings}
+                        onBlur={saveLocalSettings}
                         placeholder="Enter your name"
                         className="home-settings-input"
                       />
@@ -428,7 +470,7 @@ export default function Home() {
                             style={{ background: color }}
                             onClick={() => {
                               setAvatarColor(color)
-                              setTimeout(saveSettings, 0)
+                              setTimeout(saveLocalSettings, 0)
                             }}
                           />
                         ))}
@@ -446,7 +488,7 @@ export default function Home() {
                         value={currency}
                         onChange={(e) => {
                           setCurrency(e.target.value)
-                          setTimeout(saveSettings, 0)
+                          setTimeout(saveLocalSettings, 0)
                         }}
                         className="home-settings-select"
                       >
@@ -470,10 +512,7 @@ export default function Home() {
                         <input
                           type="checkbox"
                           checked={notifications.deals}
-                          onChange={(e) => {
-                            setNotifications(prev => ({ ...prev, deals: e.target.checked }))
-                            setTimeout(saveSettings, 0)
-                          }}
+                          onChange={(e) => saveNotificationSetting('deals', e.target.checked)}
                         />
                         <span className="home-toggle-switch" />
                       </label>
@@ -483,10 +522,7 @@ export default function Home() {
                         <input
                           type="checkbox"
                           checked={notifications.splits}
-                          onChange={(e) => {
-                            setNotifications(prev => ({ ...prev, splits: e.target.checked }))
-                            setTimeout(saveSettings, 0)
-                          }}
+                          onChange={(e) => saveNotificationSetting('splits', e.target.checked)}
                         />
                         <span className="home-toggle-switch" />
                       </label>
@@ -496,10 +532,7 @@ export default function Home() {
                         <input
                           type="checkbox"
                           checked={notifications.budget}
-                          onChange={(e) => {
-                            setNotifications(prev => ({ ...prev, budget: e.target.checked }))
-                            setTimeout(saveSettings, 0)
-                          }}
+                          onChange={(e) => saveNotificationSetting('budget', e.target.checked)}
                         />
                         <span className="home-toggle-switch" />
                       </label>
