@@ -135,7 +135,7 @@ export default function BudgetPage() {
   const [authLoading, setAuthLoading] = useState(true)
   
   // Data state
-  const [totalBudget, setTotalBudget] = useState(2000)
+  const [totalBudget, setTotalBudget] = useState(0) // Starts at $0, user sets their own
   const [categories, setCategories] = useState<BudgetCategory[]>([])
   const [allLocalExpenses, setAllLocalExpenses] = useState<BudgetExpense[]>([]) // ALL expenses across all months
   const [allLocalCategories, setAllLocalCategories] = useState<BudgetCategory[]>([]) // ALL categories across all months
@@ -284,6 +284,20 @@ export default function BudgetPage() {
         budget: unspent,
         spent: 0,
         value: unspent,
+        isUnspent: true,
+      })
+    }
+    
+    // If no data at all (no budget set, no spending), show a placeholder ring
+    if (categoryData.length === 0) {
+      categoryData.push({
+        id: 'empty',
+        name: 'No Budget Set',
+        emoji: '',
+        color: 'rgba(100, 116, 139, 0.2)',
+        budget: 0,
+        spent: 0,
+        value: 1, // Need a value > 0 to render
         isUnspent: true,
       })
     }
@@ -735,7 +749,18 @@ export default function BudgetPage() {
               autoFocus
               min={0}
               step={50}
+              placeholder="Enter amount..."
             />
+          ) : totalBudget === 0 ? (
+            <button 
+              className="budget-set-btn" 
+              onClick={() => setEditingTotal(true)}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+              Set Budget
+            </button>
           ) : (
             <span 
               className="budget-total-value" 
@@ -785,13 +810,15 @@ export default function BudgetPage() {
           </div>
         )}
 
-        {/* Add Expense Button */}
-        <button className="budget-add-btn" onClick={() => setShowAddModal(true)}>
+        {/* Build Your Budget Button */}
+        <button className="budget-build-btn" onClick={() => setShowNewCategoryModal(true)}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-            <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+            <line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/>
           </svg>
-          Add Expense
+          Build Your Budget
         </button>
+        <p className="budget-build-hint">Create categories to organize your spending</p>
 
         {/* Legend */}
         {categories.length > 0 && (
@@ -831,7 +858,7 @@ export default function BudgetPage() {
         {/* Category Header */}
         <div className="budget-categories-header">
           <div className="budget-categories-title">
-            {viewMode === 'month' ? 'Categories' : 'Weekly Breakdown'}
+            {viewMode === 'month' ? 'Your Spending' : 'Weekly Breakdown'}
           </div>
           <div className="budget-categories-actions">
             <button 
@@ -844,13 +871,13 @@ export default function BudgetPage() {
               Manage
             </button>
             <button 
-              className="budget-new-category-btn"
-              onClick={() => setShowNewCategoryModal(true)}
+              className="budget-add-expense-btn"
+              onClick={() => setShowAddModal(true)}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
               </svg>
-              New
+              Add Expense
             </button>
           </div>
         </div>
@@ -859,18 +886,9 @@ export default function BudgetPage() {
           <div className="budget-loading-inline">Loading categories...</div>
         ) : categories.length === 0 ? (
           <div className="budget-empty-categories">
-            <div className="budget-empty-icon">📁</div>
-            <h3>No categories yet</h3>
-            <p>Create your first budget category to start tracking expenses</p>
-            <button 
-              className="budget-empty-btn"
-              onClick={() => setShowNewCategoryModal(true)}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
-              </svg>
-              Create Category
-            </button>
+            <div className="budget-empty-icon">📊</div>
+            <h3>No spending yet</h3>
+            <p>Use "Build Your Budget" above to create categories, then add expenses here</p>
           </div>
         ) : viewMode === 'month' ? (
           /* Monthly View - progress bars per category */
@@ -2012,6 +2030,25 @@ const styles = `
     color: #60a5fa;
     cursor: pointer;
   }
+  .budget-set-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(59, 130, 246, 0.1));
+    border: 1px dashed rgba(59, 130, 246, 0.4);
+    border-radius: 10px;
+    color: #60a5fa;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .budget-set-btn:hover {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.3), rgba(59, 130, 246, 0.15));
+    border-color: rgba(59, 130, 246, 0.6);
+    transform: translateY(-1px);
+  }
   .budget-total-edit {
     background: rgba(255,255,255,0.06);
     border: 1px solid rgba(255,255,255,0.12);
@@ -2045,24 +2082,55 @@ const styles = `
   .budget-pie-center-amount { font-size: 1.75rem; font-weight: 700; color: #f1f5f9; }
   .budget-pie-center-sub { font-size: 0.75rem; color: #94a3b8; margin-top: 2px; }
 
-  /* Add Button */
-  .budget-add-btn {
+  /* Build Your Budget Button (under chart) */
+  .budget-build-btn {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
-    padding: 12px 24px;
-    border-radius: 20px;
-    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    gap: 10px;
+    padding: 14px 28px;
+    border-radius: 14px;
+    background: linear-gradient(135deg, #22c55e, #16a34a);
     border: none;
     color: #fff;
-    font-size: 0.875rem;
+    font-size: 1rem;
     font-weight: 600;
     cursor: pointer;
-    box-shadow: 0 4px 14px rgba(59, 130, 246, 0.3);
-    margin: 0 auto 20px;
+    box-shadow: 0 4px 16px rgba(34, 197, 94, 0.35);
+    margin: 0 auto 8px;
+    transition: all 0.2s;
   }
-  .budget-add-btn:hover { filter: brightness(1.1); }
+  .budget-build-btn:hover { 
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(34, 197, 94, 0.45);
+  }
+  .budget-build-hint {
+    text-align: center;
+    font-size: 0.75rem;
+    color: #64748b;
+    margin: 0 0 20px 0;
+  }
+  
+  /* Add Expense Button (in header) */
+  .budget-add-expense-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    border: none;
+    border-radius: 10px;
+    color: white;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+  }
+  .budget-add-expense-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+  }
 
   /* Legend */
   .budget-pie-legend {
