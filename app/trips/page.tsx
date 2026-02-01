@@ -6,11 +6,30 @@ import { useRouter } from 'next/navigation'
 import { useSession, isDevBypassEnabled } from '@/lib/useSession'
 import { isUserAuthenticated, getLoginRedirectPath } from '@/lib/authGuard'
 import { useNavVisibility } from '@/components/BottomNav'
+import { isSupabaseConfigured } from '@/lib/supabaseClient'
+import {
+  getMyGroups,
+  createGroup as createGroupApi,
+  deleteGroup as deleteGroupApi,
+  inviteToGroup,
+  getMyPendingInvites,
+  acceptInvite,
+  declineInvite,
+  leaveGroup,
+  getGroupExpenses,
+  addExpense as addExpenseApi,
+  deleteExpense as deleteExpenseApi,
+  getMyBalances,
+  getGroupBalances,
+  type Group as ApiGroup,
+  type PendingInvite as ApiPendingInvite,
+  type Expense as ApiExpense,
+  type Balance,
+} from '@/lib/tripsRepo'
 
 // ============================================
-// STUB BACKEND - Works without Supabase
-// All data is stored in local state (memory)
-// Easy to swap for real API later
+// TRIPS & SPLITS - Works with Supabase when configured
+// Falls back to local state when not configured
 // ============================================
 
 // ============ Types ============
@@ -75,6 +94,9 @@ interface PendingInvite {
   group_id: string | null
   status: string
   created_at: string
+  group_name?: string
+  group_emoji?: string
+  inviter_name?: string
 }
 
 // ============ Utility Functions ============
@@ -138,22 +160,143 @@ export default function TripsPage() {
     }
   }, [authLoading, isAuthenticated, router])
   
-  // Use mock user for local data operations (trips page uses local state)
-  const [user] = useState(MOCK_USER)
+  // Current user (from auth or mock)
+  const currentUserId = authUser?.id || MOCK_USER.user_id
+  const currentUserEmail = authUser?.email || MOCK_USER.email
+  const user = authUser ? {
+    user_id: authUser.id,
+    email: authUser.email || '',
+    full_name: authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'You',
+    avatar_url: null,
+  } : MOCK_USER
+  
   const [isSignedIn, setIsSignedIn] = useState(true)
   const [signingIn, setSigningIn] = useState(false)
   const [signInEmail, setSignInEmail] = useState('')
 
-  // Data state (local/in-memory) - starts BLANK for new users
+  // Data state - loaded from Supabase when configured, else local mock
   const [friends, setFriends] = useState<Friend[]>([])
   const [groups, setGroups] = useState<Group[]>([])
   const [expenses, setExpenses] = useState<Expense[]>([])
   const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([])
+  const [supabaseBalances, setSupabaseBalances] = useState<Balance[]>([])
+  const [dataLoading, setDataLoading] = useState(isSupabaseConfigured)
+  const [dataError, setDataError] = useState<string | null>(null)
+
+  // Load data from Supabase
+  const loadData = useCallback(async () => {
+    if (!isSupabaseConfigured || !isAuthenticated) return
+    
+    setDataLoading(true)
+    setDataError(null)
+    
+    try {
+      // Load groups with members
+      const { data: groupsData, error: groupsError } = await getMyGroups()
+      if (groupsError) {
+        console.error('loadData groups:', groupsError)
+        setDataError(groupsError)
+      } else if (groupsData) {
+        // Convert API groups to local format
+        const localGroups: Group[] = groupsData.map(g => ({
+          id: g.id,
+          name: g.name,
+          emoji: g.emoji,
+          owner_id: g.owner_id,
+          members: g.members.map(m => ({
+            user_id: m.user_id,
+            role: m.role,
+            profile: m.profile,
+          })),
+        }))
+        setGroups(localGroups)
+        
+        // Extract friends from group members (people you share groups with)
+        const friendsMap: Record<string, Friend> = {}
+        groupsData.forEach(g => {
+          g.members.forEach(m => {
+            if (m.user_id !== currentUserId && !friendsMap[m.user_id]) {
+              friendsMap[m.user_id] = {
+                ...m.profile,
+                friendship_id: m.id,
+                status: 'accepted',
+                pending: false,
+              }
+            }
+          })
+        })
+        setFriends(Object.values(friendsMap))
+        
+        // Load expenses for all groups
+        const allExpenses: Expense[] = []
+        for (const g of groupsData) {
+          const { data: expData } = await getGroupExpenses(g.id)
+          if (expData) {
+            expData.forEach(e => {
+              allExpenses.push({
+                id: e.id,
+                description: e.description,
+                amount: e.amount,
+                currency: e.currency,
+                paid_by: e.paid_by,
+                group_id: e.group_id,
+                created_by: e.created_by,
+                created_at: e.created_at,
+                split_mode: 'equal',
+                split_meta: null,
+                splits: e.splits.map(s => ({
+                  id: s.id,
+                  user_id: s.user_id,
+                  share: s.share,
+                })),
+              })
+            })
+          }
+        }
+        setExpenses(allExpenses)
+      }
+      
+      // Load pending invites
+      const { data: invitesData } = await getMyPendingInvites()
+      if (invitesData) {
+        const localInvites: PendingInvite[] = invitesData.map(i => ({
+          id: i.id,
+          invited_email: i.invited_email,
+          group_id: i.group_id,
+          status: i.status,
+          created_at: i.created_at,
+          group_name: i.group_name,
+          group_emoji: i.group_emoji,
+          inviter_name: i.inviter_name,
+        }))
+        setPendingInvites(localInvites)
+      }
+      
+      // Load overall balances
+      const { data: balancesData } = await getMyBalances()
+      if (balancesData) {
+        setSupabaseBalances(balancesData)
+      }
+    } catch (err) {
+      console.error('loadData exception:', err)
+      setDataError('Failed to load data')
+    } finally {
+      setDataLoading(false)
+    }
+  }, [isAuthenticated, currentUserId])
+
+  // Load data on mount and when auth changes
+  useEffect(() => {
+    if (isSupabaseConfigured && isAuthenticated && !authLoading) {
+      loadData()
+    }
+  }, [isAuthenticated, authLoading, loadData])
 
   // UI state
   const [activeTab, setActiveTab] = useState<'friends' | 'groups' | 'activity'>('friends')
   const [showAddModal, setShowAddModal] = useState(false)
   const [showAddFriendModal, setShowAddFriendModal] = useState(false)
+  const [inviteToGroupId, setInviteToGroupId] = useState<string | undefined>(undefined)
   const [showCreateGroupModal, setShowCreateGroupModal] = useState(false)
   
   // Hide global nav when any modal is open
@@ -268,11 +411,11 @@ export default function TripsPage() {
   }, [user, friends, groups])
 
   // ============================================
-  // STUB API HANDLERS - Replace with real API later
+  // API HANDLERS - Use Supabase when configured
   // ============================================
 
-  // Invite friend (stub)
-  const handleInviteFriend = useCallback((email: string, groupId?: string) => {
+  // Invite friend to a group
+  const handleInviteFriend = useCallback(async (email: string, groupId?: string) => {
     // Check if already a friend
     if (friends.some(f => f.email.toLowerCase() === email.toLowerCase())) {
       showToast('This person is already your friend', 'error')
@@ -285,7 +428,20 @@ export default function TripsPage() {
       return
     }
 
-    // Create pending invite
+    if (isSupabaseConfigured && groupId) {
+      // Use Supabase
+      const { error } = await inviteToGroup(groupId, email)
+      if (error) {
+        showToast(error, 'error')
+        return
+      }
+      showToast(`Invite sent to ${email}`)
+      setShowAddFriendModal(false)
+      loadData() // Refresh data
+      return
+    }
+
+    // Fallback: local state
     const newInvite: PendingInvite = {
       id: generateId(),
       invited_email: email.toLowerCase(),
@@ -310,10 +466,10 @@ export default function TripsPage() {
 
     showToast(`Invite sent to ${email}`)
     setShowAddFriendModal(false)
-  }, [friends, pendingInvites, showToast])
+  }, [friends, pendingInvites, showToast, loadData])
 
-  // Create expense (stub) - supports equal, exact, and percent split modes
-  const handleCreateExpense = useCallback((
+  // Create expense - supports equal, exact, and percent split modes
+  const handleCreateExpense = useCallback(async (
     description: string,
     amount: number,
     paidBy: string,
@@ -372,6 +528,25 @@ export default function TripsPage() {
       shares = computedCents.map(cents => cents / 100)
     }
 
+    // Use Supabase when configured and group exists
+    if (isSupabaseConfigured && groupId) {
+      const splitAmong = splitUserIds.map((userId, index) => ({
+        userId,
+        share: shares[index],
+      }))
+      
+      const { error } = await addExpenseApi(groupId, description, amount, paidBy, splitAmong)
+      if (error) {
+        showToast(error, 'error')
+        return
+      }
+      showToast('Expense added!')
+      setShowAddModal(false)
+      loadData() // Refresh data
+      return
+    }
+
+    // Fallback: local state
     const splits: ExpenseSplit[] = splitUserIds.map((userId, index) => ({
       id: generateId(),
       user_id: userId,
@@ -402,10 +577,23 @@ export default function TripsPage() {
     setExpenses(prev => [newExpense, ...prev])
     showToast('Expense added!')
     setShowAddModal(false)
-  }, [user, showToast])
+  }, [user, showToast, loadData])
 
-  // Create group (stub)
-  const handleCreateGroup = useCallback((name: string, emoji: string) => {
+  // Create group
+  const handleCreateGroup = useCallback(async (name: string, emoji: string) => {
+    if (isSupabaseConfigured) {
+      const { data, error } = await createGroupApi(name, emoji)
+      if (error) {
+        showToast(error, 'error')
+        return
+      }
+      showToast('Group created!')
+      setShowCreateGroupModal(false)
+      loadData() // Refresh data
+      return
+    }
+
+    // Fallback: local state
     const newGroup: Group = {
       id: generateId(),
       name,
@@ -419,20 +607,34 @@ export default function TripsPage() {
     setGroups(prev => [...prev, newGroup])
     showToast('Group created!')
     setShowCreateGroupModal(false)
-  }, [user, showToast])
+  }, [user, showToast, loadData])
 
-  // Add member to group (stub)
-  const handleAddMemberToGroup = useCallback((groupId: string, friendId: string) => {
-    const friend = friends.find(f => f.user_id === friendId)
+  // Add member to group (invite by email for Supabase)
+  const handleAddMemberToGroup = useCallback(async (groupId: string, friendIdOrEmail: string) => {
+    // Check if it's an email (for inviting new people)
+    if (friendIdOrEmail.includes('@')) {
+      if (isSupabaseConfigured) {
+        const { error } = await inviteToGroup(groupId, friendIdOrEmail)
+        if (error) {
+          showToast(error, 'error')
+          return
+        }
+        showToast(`Invite sent to ${friendIdOrEmail}`)
+        return
+      }
+    }
+
+    // Add existing friend to group (local state only)
+    const friend = friends.find(f => f.user_id === friendIdOrEmail)
     if (!friend) return
 
     setGroups(prev => prev.map(g => {
       if (g.id !== groupId) return g
-      if (g.members.some(m => m.user_id === friendId)) return g
+      if (g.members.some(m => m.user_id === friendIdOrEmail)) return g
       return {
         ...g,
         members: [...g.members, {
-          user_id: friendId,
+          user_id: friendIdOrEmail,
           role: 'member' as const,
           profile: friend,
         }],
@@ -440,6 +642,85 @@ export default function TripsPage() {
     }))
     showToast(`${friend.full_name} added to group`)
   }, [friends, showToast])
+
+  // Accept pending invite
+  const handleAcceptInvite = useCallback(async (inviteId: string) => {
+    if (isSupabaseConfigured) {
+      const { error } = await acceptInvite(inviteId)
+      if (error) {
+        showToast(error, 'error')
+        return
+      }
+      showToast('Invite accepted! You joined the group.')
+      loadData() // Refresh data
+      return
+    }
+    // Local: just remove from pending
+    setPendingInvites(prev => prev.filter(i => i.id !== inviteId))
+    showToast('Invite accepted!')
+  }, [showToast, loadData])
+
+  // Decline pending invite
+  const handleDeclineInvite = useCallback(async (inviteId: string) => {
+    if (isSupabaseConfigured) {
+      const { error } = await declineInvite(inviteId)
+      if (error) {
+        showToast(error, 'error')
+        return
+      }
+      showToast('Invite declined')
+      loadData() // Refresh data
+      return
+    }
+    // Local: just remove from pending
+    setPendingInvites(prev => prev.filter(i => i.id !== inviteId))
+    showToast('Invite declined')
+  }, [showToast, loadData])
+
+  // Delete a group (owner only)
+  const handleDeleteGroup = useCallback(async (groupId: string) => {
+    if (isSupabaseConfigured) {
+      const { error } = await deleteGroupApi(groupId)
+      if (error) {
+        showToast(error, 'error')
+        return
+      }
+      showToast('Group deleted')
+      setExpandedGroup(null)
+      loadData()
+      return
+    }
+    // Local
+    setGroups(prev => prev.filter(g => g.id !== groupId))
+    setExpenses(prev => prev.filter(e => e.group_id !== groupId))
+    setExpandedGroup(null)
+    showToast('Group deleted')
+  }, [showToast, loadData])
+
+  // Leave a group
+  const handleLeaveGroup = useCallback(async (groupId: string) => {
+    if (isSupabaseConfigured) {
+      const { error } = await leaveGroup(groupId)
+      if (error) {
+        showToast(error, 'error')
+        return
+      }
+      showToast('Left group')
+      setExpandedGroup(null)
+      loadData()
+      return
+    }
+    // Local: remove self from group
+    setGroups(prev => prev.map(g => {
+      if (g.id !== groupId) return g
+      return {
+        ...g,
+        members: g.members.filter(m => m.user_id !== user.user_id),
+      }
+    }).filter(g => g.members.length > 0))
+    setExpandedGroup(null)
+    showToast('Left group')
+  }, [user.user_id, showToast, loadData])
 
   // ============================================
   // RENDER
@@ -588,8 +869,24 @@ export default function TripsPage() {
 
       {/* Tab Content */}
       <div className="trips-content">
+        {/* Loading State */}
+        {dataLoading && (
+          <div className="trips-loading">
+            <div className="trips-loading-spinner"></div>
+            <p>Loading your groups...</p>
+          </div>
+        )}
+
+        {/* Error State */}
+        {dataError && !dataLoading && (
+          <div className="trips-error">
+            <p>{dataError}</p>
+            <button onClick={loadData} className="trips-retry-btn">Retry</button>
+          </div>
+        )}
+
         {/* Friends Tab */}
-        {activeTab === 'friends' && (
+        {!dataLoading && activeTab === 'friends' && (
           <div className="trips-friends-list">
             {/* Add Friend Button */}
             <button className="trips-add-friend-btn" onClick={() => setShowAddFriendModal(true)}>
@@ -660,7 +957,7 @@ export default function TripsPage() {
         )}
 
         {/* Groups Tab */}
-        {activeTab === 'groups' && (
+        {!dataLoading && activeTab === 'groups' && (
           <div className="trips-groups-list">
             {/* Create Group Button */}
             <button className="trips-add-friend-btn" onClick={() => setShowCreateGroupModal(true)}>
@@ -676,7 +973,48 @@ export default function TripsPage() {
               </div>
             </button>
 
-            {groups.length === 0 && (
+            {/* Pending Invites Section */}
+            {pendingInvites.length > 0 && (
+              <div className="trips-pending-invites">
+                <div className="trips-pending-header">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/>
+                  </svg>
+                  Pending Invites
+                </div>
+                {pendingInvites.map(invite => (
+                  <div key={invite.id} className="trips-pending-invite-card">
+                    <div className="trips-pending-invite-icon">
+                      {invite.group_emoji || '✉️'}
+                    </div>
+                    <div className="trips-pending-invite-info">
+                      <span className="trips-pending-invite-title">
+                        {invite.group_name || 'Group Invite'}
+                      </span>
+                      <span className="trips-pending-invite-from">
+                        From {invite.inviter_name || 'someone'}
+                      </span>
+                    </div>
+                    <div className="trips-pending-invite-actions">
+                      <button 
+                        className="trips-invite-accept-btn"
+                        onClick={() => handleAcceptInvite(invite.id)}
+                      >
+                        Accept
+                      </button>
+                      <button 
+                        className="trips-invite-decline-btn"
+                        onClick={() => handleDeclineInvite(invite.id)}
+                      >
+                        Decline
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {groups.length === 0 && pendingInvites.length === 0 && (
               <div className="trips-empty">
                 <p>No groups yet. Create one to split expenses!</p>
               </div>
@@ -799,6 +1137,7 @@ export default function TripsPage() {
                               className="trips-invite-btn"
                               onClick={(e) => {
                                 e.stopPropagation()
+                                setInviteToGroupId(group.id)
                                 setShowAddFriendModal(true)
                               }}
                             >
@@ -807,7 +1146,7 @@ export default function TripsPage() {
                                 <circle cx="8.5" cy="7" r="4"/>
                                 <line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/>
                               </svg>
-                              Invite New Person
+                              Invite by Email
                             </button>
                           </div>
                         )}
@@ -895,7 +1234,7 @@ export default function TripsPage() {
         )}
 
         {/* Activity Tab */}
-        {activeTab === 'activity' && (
+        {!dataLoading && activeTab === 'activity' && (
           <div className="trips-activity-list">
             {expenses.length === 0 && (
               <div className="trips-empty">
@@ -967,7 +1306,11 @@ export default function TripsPage() {
       {showAddFriendModal && (
         <AddFriendModal
           groups={groups}
-          onClose={() => setShowAddFriendModal(false)}
+          defaultGroupId={inviteToGroupId}
+          onClose={() => {
+            setShowAddFriendModal(false)
+            setInviteToGroupId(undefined)
+          }}
           onSubmit={handleInviteFriend}
         />
       )}
@@ -1422,13 +1765,14 @@ function AddExpenseModal({ currentUserId, friends, groups, onClose, onSubmit }: 
 // ============ Add Friend Modal ============
 interface AddFriendModalProps {
   groups: Group[]
+  defaultGroupId?: string
   onClose: () => void
   onSubmit: (email: string, groupId?: string) => void
 }
 
-function AddFriendModal({ groups, onClose, onSubmit }: AddFriendModalProps) {
+function AddFriendModal({ groups, defaultGroupId, onClose, onSubmit }: AddFriendModalProps) {
   const [email, setEmail] = useState('')
-  const [groupId, setGroupId] = useState('')
+  const [groupId, setGroupId] = useState(defaultGroupId || '')
   const [error, setError] = useState('')
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -1496,7 +1840,9 @@ function AddFriendModal({ groups, onClose, onSubmit }: AddFriendModalProps) {
             Send Invite
           </button>
 
-          <p className="trips-demo-note">Demo mode: invite is simulated locally</p>
+          {!isSupabaseConfigured && (
+            <p className="trips-demo-note">Demo mode: invite is simulated locally</p>
+          )}
         </form>
       </div>
     </div>
@@ -1723,11 +2069,135 @@ const styles = `
   .trips-tab svg { opacity: 0.7; }
   .trips-tab.active svg { opacity: 1; }
   .trips-content { padding: 16px 20px; }
+  
+  /* Loading & Error States */
+  .trips-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 60px 20px;
+    gap: 16px;
+    color: #64748b;
+  }
+  .trips-loading-spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid rgba(255,255,255,0.1);
+    border-top-color: #3b82f6;
+    border-radius: 50%;
+    animation: trips-spin 0.8s linear infinite;
+  }
+  @keyframes trips-spin { to { transform: rotate(360deg); } }
+  .trips-error {
+    text-align: center;
+    padding: 40px 20px;
+    color: #f87171;
+  }
+  .trips-retry-btn {
+    margin-top: 12px;
+    padding: 8px 20px;
+    background: rgba(59, 130, 246, 0.15);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: 8px;
+    color: #60a5fa;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .trips-retry-btn:hover { background: rgba(59, 130, 246, 0.25); }
+  
   .trips-empty {
     text-align: center;
     padding: 40px 20px;
     color: #64748b;
   }
+  
+  /* Pending Invites */
+  .trips-pending-invites {
+    margin-bottom: 16px;
+    background: rgba(59, 130, 246, 0.08);
+    border: 1px solid rgba(59, 130, 246, 0.2);
+    border-radius: 16px;
+    padding: 12px;
+  }
+  .trips-pending-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #60a5fa;
+    margin-bottom: 12px;
+    padding: 0 4px;
+  }
+  .trips-pending-invite-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    background: rgba(255,255,255,0.04);
+    border-radius: 12px;
+    margin-bottom: 8px;
+  }
+  .trips-pending-invite-card:last-child { margin-bottom: 0; }
+  .trips-pending-invite-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    background: rgba(59, 130, 246, 0.15);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.25rem;
+  }
+  .trips-pending-invite-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .trips-pending-invite-title {
+    font-size: 0.9375rem;
+    font-weight: 500;
+    color: #e2e8f0;
+  }
+  .trips-pending-invite-from {
+    font-size: 0.8125rem;
+    color: #94a3b8;
+  }
+  .trips-pending-invite-actions {
+    display: flex;
+    gap: 8px;
+  }
+  .trips-invite-accept-btn {
+    padding: 8px 16px;
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    border: none;
+    border-radius: 8px;
+    color: white;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .trips-invite-accept-btn:hover { filter: brightness(1.1); }
+  .trips-invite-decline-btn {
+    padding: 8px 12px;
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 8px;
+    color: #94a3b8;
+    font-size: 0.8125rem;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .trips-invite-decline-btn:hover { 
+    border-color: rgba(239, 68, 68, 0.5);
+    color: #f87171;
+  }
+  
   .trips-friends-list, .trips-groups-list, .trips-activity-list { display: flex; flex-direction: column; gap: 8px; }
   .trips-friend-item, .trips-group-item, .trips-activity-item {
     display: flex;

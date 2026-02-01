@@ -186,6 +186,28 @@ export async function createInvite(communityId: string, email: string): Promise<
     console.error('createInvite:', error)
     return { error: error.message }
   }
+
+  // Send email via Edge Function (do not rollback invite on failure)
+  try {
+    const { data: community } = await supabase.from('communities').select('name').eq('id', communityId).single()
+    const { data: inviterProfile } = await supabase.from('profiles').select('full_name, email').eq('user_id', user.id).single()
+    const inviter_name = inviterProfile?.full_name || inviterProfile?.email || 'Someone'
+    const community_name = community?.name || 'a community'
+
+    const { error: fnError } = await supabase.functions.invoke('send-invite-email', {
+      body: {
+        invited_email: email.trim().toLowerCase(),
+        inviter_name,
+        group_name: community_name
+      }
+    })
+    if (fnError) {
+      console.error('send-invite-email (community):', fnError)
+    }
+  } catch (err) {
+    console.error('send-invite-email (community) exception:', err)
+  }
+
   return { error: null }
 }
 
