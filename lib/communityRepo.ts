@@ -24,6 +24,171 @@ export interface Community {
   my_role: string
 }
 
+/** Visible communities list (RLS) with member count and join status */
+export interface VisibleCommunity {
+  id: string
+  code: string | null
+  name: string
+  emoji: string | null
+  kind: 'city' | 'university' | 'private'
+  image_url: string | null
+  member_count: number
+  joined_by_me: boolean
+}
+
+// ============ Ensure user has their own Personal Friends group ============
+export async function ensurePersonalFriendsMembership(): Promise<void> {
+  if (!isSupabaseConfigured) return
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return
+  
+  // Call RPC to create user's own Personal Friends group if needed
+  const { error } = await supabase.rpc('ensure_personal_friends_membership')
+  if (error) {
+    console.warn('ensurePersonalFriendsMembership:', error.message)
+  }
+}
+
+// Helper to check if a community is the user's own Personal Friends
+export function isPersonalFriendsCode(code: string | null, userId?: string): boolean {
+  if (!code) return false
+  // Matches 'personal_friends_{uuid}' pattern
+  return code.startsWith('personal_friends_')
+}
+
+// ============ Visible communities list (replace mock) ============
+export async function getVisibleCommunitiesWithCounts(): Promise<{
+  data: VisibleCommunity[] | null
+  error: string | null
+}> {
+  if (!isSupabaseConfigured) {
+    return { data: null, error: 'Supabase not configured' }
+  }
+
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) {
+    return { data: null, error: 'Not authenticated' }
+  }
+
+  // Ensure user is in Personal Friends before fetching
+  await ensurePersonalFriendsMembership()
+
+  // Fetch visible communities (RLS filters by kind + membership)
+  const { data: rows, error: communitiesError } = await supabase
+    .from('communities')
+    .select('id, code, name, emoji, kind, image_url, created_at')
+    .order('created_at', { ascending: false })
+
+  if (communitiesError) {
+    console.error('getVisibleCommunitiesWithCounts communities:', communitiesError)
+    return { data: null, error: communitiesError.message }
+  }
+  if (!rows || rows.length === 0) {
+    return { data: [], error: null }
+  }
+
+  const communityIds = rows.map(r => r.id)
+
+  // Current user's memberships
+  const { data: myMemberships, error: membersError } = await supabase
+    .from('community_members')
+    .select('community_id')
+    .eq('user_id', user.id)
+
+  if (membersError) {
+    console.error('getVisibleCommunitiesWithCounts memberships:', membersError)
+    return { data: null, error: membersError.message }
+  }
+  const joinedSet = new Set((myMemberships || []).map(m => m.community_id))
+
+  // Member counts: fetch all members for these communities and count in JS
+  const { data: allMembers, error: countError } = await supabase
+    .from('community_members')
+    .select('community_id')
+    .in('community_id', communityIds)
+
+  if (countError) {
+    console.error('getVisibleCommunitiesWithCounts member counts:', countError)
+    return { data: null, error: countError.message }
+  }
+  const countByCommunity: Record<string, number> = {}
+  communityIds.forEach(id => { countByCommunity[id] = 0 })
+  ;(allMembers || []).forEach(m => {
+    if (countByCommunity[m.community_id] !== undefined) {
+      countByCommunity[m.community_id] += 1
+    }
+  })
+
+  const data: VisibleCommunity[] = rows.map(r => ({
+    id: r.id,
+    code: r.code ?? null,
+    name: r.name,
+    emoji: r.emoji ?? null,
+    kind: r.kind as 'city' | 'university' | 'private',
+    image_url: r.image_url ?? null,
+    member_count: countByCommunity[r.id] ?? 0,
+    joined_by_me: joinedSet.has(r.id),
+  }))
+
+  return { data, error: null }
+}
+
+export async function joinCommunity(communityId: string): Promise<{ error: string | null }> {
+  if (!isSupabaseConfigured) return { error: 'Supabase not configured' }
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not authenticated' }
+
+  const { error } = await supabase
+    .from('community_members')
+    .insert({ community_id: communityId, user_id: user.id, role: 'member' })
+
+  if (error) {
+    console.error('joinCommunity:', error)
+    return { error: error.message }
+  }
+  return { error: null }
+}
+
+export async function leaveCommunity(communityId: string): Promise<{ error: string | null }> {
+  if (!isSupabaseConfigured) return { error: 'Supabase not configured' }
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not authenticated' }
+
+  const { error } = await supabase
+    .from('community_members')
+    .delete()
+    .eq('community_id', communityId)
+    .eq('user_id', user.id)
+
+  if (error) {
+    console.error('leaveCommunity:', error)
+    return { error: error.message }
+  }
+  return { error: null }
+}
+
+/** Invite a friend by email to a community (e.g. Personal Friends). Uses community_invites table. */
+export async function createInvite(communityId: string, email: string): Promise<{ error: string | null }> {
+  if (!isSupabaseConfigured) return { error: 'Supabase not configured' }
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not authenticated' }
+
+  const { error } = await supabase
+    .from('community_invites')
+    .insert({
+      community_id: communityId,
+      invited_by: user.id,
+      invited_email: email.trim().toLowerCase(),
+      status: 'pending',
+    })
+
+  if (error) {
+    console.error('createInvite:', error)
+    return { error: error.message }
+  }
+  return { error: null }
+}
+
 export interface Post {
   post_id: string
   title: string

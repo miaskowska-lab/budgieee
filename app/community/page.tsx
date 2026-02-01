@@ -5,6 +5,8 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useSession, isDevBypassEnabled } from '@/lib/useSession'
 import { isUserAuthenticated, getLoginRedirectPath } from '@/lib/authGuard'
+import { getVisibleCommunitiesWithCounts, joinCommunity, leaveCommunity, createInvite, isPersonalFriendsCode } from '@/lib/communityRepo'
+import { isSupabaseConfigured } from '@/lib/supabaseClient'
 
 // ============================================
 // COMMUNITY DEALS - Budgieee
@@ -17,11 +19,13 @@ const POINTS_PER_LIKE = 2
 // ============ Types ============
 interface Community {
   id: string
+  code?: string | null
   name: string
   emoji: string
   kind: 'city' | 'university' | 'private'
   image_url: string | null
   member_count: number
+  joined_by_me?: boolean
 }
 
 interface Post {
@@ -69,13 +73,22 @@ const MOCK_USER = {
   avatar_color: '#6366f1',
 }
 
+// City community image URLs (used when Supabase image_url is null)
+const CITY_IMAGE_URLS: Record<string, string> = {
+  sf: 'https://images.unsplash.com/photo-1501594907352-04cda38ebc29?w=400&h=200&fit=crop',
+  ba: 'https://images.unsplash.com/photo-1589909202802-8f4aadce1849?w=400&h=200&fit=crop',
+  hyd: 'https://images.unsplash.com/photo-1572252009286-268acec5ca0a?w=400&h=200&fit=crop',
+  tok: 'https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?w=400&h=200&fit=crop',
+  ber: 'https://images.unsplash.com/photo-1560969184-10fe8719e047?w=400&h=200&fit=crop',
+}
+
 // Available communities to discover/join (pre-existing public communities)
 const INITIAL_COMMUNITIES: Community[] = [
-  { id: 'sf', name: 'Minerva San Francisco', emoji: '🌉', kind: 'city', image_url: 'https://images.unsplash.com/photo-1501594907352-04cda38ebc29?w=400&h=200&fit=crop', member_count: 156 },
-  { id: 'ba', name: 'Minerva Buenos Aires', emoji: '🇦🇷', kind: 'city', image_url: 'https://images.unsplash.com/photo-1589909202802-8f4aadce1849?w=400&h=200&fit=crop', member_count: 142 },
-  { id: 'hyd', name: 'Minerva Hyderabad', emoji: '🇮🇳', kind: 'city', image_url: 'https://images.unsplash.com/photo-1572252009286-268acec5ca0a?w=400&h=200&fit=crop', member_count: 138 },
-  { id: 'tok', name: 'Minerva Tokyo', emoji: '🇯🇵', kind: 'city', image_url: 'https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?w=400&h=200&fit=crop', member_count: 145 },
-  { id: 'ber', name: 'Minerva Berlin', emoji: '🇩🇪', kind: 'city', image_url: 'https://images.unsplash.com/photo-1560969184-10fe8719e047?w=400&h=200&fit=crop', member_count: 151 },
+  { id: 'sf', name: 'Minerva San Francisco', emoji: '🌉', kind: 'city', image_url: CITY_IMAGE_URLS.sf, member_count: 156 },
+  { id: 'ba', name: 'Minerva Buenos Aires', emoji: '🇦🇷', kind: 'city', image_url: CITY_IMAGE_URLS.ba, member_count: 142 },
+  { id: 'hyd', name: 'Minerva Hyderabad', emoji: '🇮🇳', kind: 'city', image_url: CITY_IMAGE_URLS.hyd, member_count: 138 },
+  { id: 'tok', name: 'Minerva Tokyo', emoji: '🇯🇵', kind: 'city', image_url: CITY_IMAGE_URLS.tok, member_count: 145 },
+  { id: 'ber', name: 'Minerva Berlin', emoji: '🇩🇪', kind: 'city', image_url: CITY_IMAGE_URLS.ber, member_count: 151 },
   { id: 'personal', name: 'Personal Friends', emoji: '👥', kind: 'private', image_url: null, member_count: 0 },
 ]
 
@@ -124,8 +137,11 @@ export default function CommunityPage() {
   const [viewMode, setViewMode] = useState<'portal' | 'feed' | 'saved'>('portal')
   const [selectedCommunityId, setSelectedCommunityId] = useState<string | null>(null)
   
-  // Data state (local mock data)
-  const [communities, setCommunities] = useState<Community[]>(INITIAL_COMMUNITIES)
+  // Data state: communities from Supabase when configured, else mock
+  // Start with empty array when Supabase is configured to avoid flash of mock data
+  const [communities, setCommunities] = useState<Community[]>(isSupabaseConfigured ? [] : INITIAL_COMMUNITIES)
+  const [communitiesLoading, setCommunitiesLoading] = useState(isSupabaseConfigured)
+  const [communitiesError, setCommunitiesError] = useState<string | null>(null)
   const [posts, setPosts] = useState<Post[]>(INITIAL_POSTS)
   const [comments, setComments] = useState<Record<string, Comment[]>>(INITIAL_COMMENTS)
   const [friends, setFriends] = useState<Friend[]>(INITIAL_FRIENDS)
@@ -143,6 +159,52 @@ export default function CommunityPage() {
     setToast({ message, type })
     setTimeout(() => setToast(null), 3000)
   }, [])
+
+  // Load communities from Supabase when configured
+  const loadCommunities = useCallback(async () => {
+    if (!isSupabaseConfigured) return
+    setCommunitiesLoading(true)
+    setCommunitiesError(null)
+    try {
+      const { data, error } = await getVisibleCommunitiesWithCounts()
+      setCommunitiesLoading(false)
+      if (error) {
+        setCommunitiesError(error)
+        console.error('loadCommunities:', error)
+        return
+      }
+      if (data) {
+        const mapped = data.map(c => ({
+          id: c.id,
+          code: c.code,
+          name: c.name,
+          emoji: c.emoji ?? '',
+          kind: c.kind,
+          image_url: c.image_url ?? (c.code ? CITY_IMAGE_URLS[c.code] : null),
+          member_count: c.member_count,
+          joined_by_me: c.joined_by_me,
+        }))
+        
+        // Sort so Personal Friends appears last (after city communities)
+        mapped.sort((a, b) => {
+          if (isPersonalFriendsCode(a.code)) return 1
+          if (isPersonalFriendsCode(b.code)) return -1
+          return 0
+        })
+        setCommunities(mapped)
+      }
+    } catch (err) {
+      console.error('loadCommunities exception:', err)
+      setCommunitiesLoading(false)
+      setCommunitiesError('Failed to load communities')
+    }
+  }, [])
+
+  useEffect(() => {
+    if (isSupabaseConfigured && isAuthenticated && !authLoading) {
+      loadCommunities()
+    }
+  }, [isAuthenticated, authLoading, loadCommunities])
 
   // Get selected community
   const selectedCommunity = communities.find(c => c.id === selectedCommunityId)
@@ -201,7 +263,7 @@ export default function CommunityPage() {
     ))
     // Update community member count
     setCommunities(prev => prev.map(c => 
-      c.id === 'personal' ? { ...c, member_count: c.member_count + 1 } : c
+      (isPersonalFriendsCode(c.code) || c.id === 'personal') ? { ...c, member_count: c.member_count + 1 } : c
     ))
     showToast('Friend added to group!')
   }
@@ -212,27 +274,66 @@ export default function CommunityPage() {
     ))
     // Update community member count
     setCommunities(prev => prev.map(c => 
-      c.id === 'personal' ? { ...c, member_count: Math.max(0, c.member_count - 1) } : c
+      (isPersonalFriendsCode(c.code) || c.id === 'personal') ? { ...c, member_count: Math.max(0, c.member_count - 1) } : c
     ))
     showToast('Friend removed from group')
   }
 
   const handleInviteByEmail = async (email: string) => {
-    // In dev mode, just simulate sending an invite
+    const personalFriends = communities.find(c => isPersonalFriendsCode(c.code) || c.id === 'personal')
+    if (isSupabaseConfigured && personalFriends) {
+      const { error } = await createInvite(personalFriends.id, email)
+      if (error) {
+        showToast(error, 'error')
+        return
+      }
+      showToast(`Invite sent to ${email}!`)
+      setShowInviteModal(false)
+      loadCommunities()
+      return
+    }
+    // Fallback when Supabase not configured: simulate
     const newFriend: Friend = {
       id: generateId(),
       name: email.split('@')[0],
       email,
       avatar_color: `#${Math.floor(Math.random()*16777215).toString(16).padStart(6, '0')}`,
-      is_member: true, // Auto-add to group
+      is_member: true,
     }
     setFriends(prev => [...prev, newFriend])
     setCommunities(prev => prev.map(c => 
-      c.id === 'personal' ? { ...c, member_count: c.member_count + 1 } : c
+      (isPersonalFriendsCode(c.code) || c.id === 'personal') ? { ...c, member_count: c.member_count + 1 } : c
     ))
     showToast(`Invite sent to ${email}!`)
     setShowInviteModal(false)
   }
+
+  const handleJoinCommunity = useCallback(async (communityId: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    const { error } = await joinCommunity(communityId)
+    if (error) {
+      showToast(error, 'error')
+      return
+    }
+    showToast('Joined community!')
+    loadCommunities()
+  }, [showToast, loadCommunities])
+
+  const handleLeaveCommunity = useCallback(async (communityId: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    const { error } = await leaveCommunity(communityId)
+    if (error) {
+      showToast(error, 'error')
+      return
+    }
+    showToast('Left community')
+    loadCommunities()
+  }, [showToast, loadCommunities])
+
+  const handleTestCommunityQuery = useCallback(async () => {
+    const result = await getVisibleCommunitiesWithCounts()
+    console.log('getVisibleCommunitiesWithCounts:', result)
+  }, [])
 
   const handleCopyInviteLink = async () => {
     const inviteLink = `${window.location.origin}/invite?group=personal&from=${MOCK_USER.id}`
@@ -450,12 +551,21 @@ export default function CommunityPage() {
           {/* Communities Section */}
           <div className="community-section">
             <h2 className="community-section-title">Your Communities</h2>
+            {communitiesError && (
+              <p className="community-inline-error">{communitiesError}</p>
+            )}
+            {communitiesLoading && (
+              <p className="community-loading-text">Loading communities…</p>
+            )}
             <div className="community-groups-grid">
               {communities.map(community => (
-                <button
+                <div
                   key={community.id}
+                  role="button"
+                  tabIndex={0}
                   className={`community-group-card ${community.kind === 'private' ? 'personal' : ''}`}
                   onClick={() => handleSelectCommunity(community.id)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleSelectCommunity(community.id); } }}
                 >
                   {community.image_url ? (
                     <div 
@@ -476,14 +586,44 @@ export default function CommunityPage() {
                       {community.member_count} {community.kind === 'private' ? 'friends' : 'members'}
                     </span>
                   </div>
+                  {community.kind !== 'private' && (
+                    <div className="community-group-action" onClick={(e) => e.stopPropagation()}>
+                      {community.joined_by_me ? (
+                        <button
+                          type="button"
+                          className="community-join-btn leave"
+                          onClick={(e) => handleLeaveCommunity(community.id, e)}
+                        >
+                          Leave
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="community-join-btn join"
+                          onClick={(e) => handleJoinCommunity(community.id, e)}
+                        >
+                          Join
+                        </button>
+                      )}
+                    </div>
+                  )}
                   <div className="community-group-arrow">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <path d="M9 18l6-6-6-6"/>
                     </svg>
                   </div>
-                </button>
+                </div>
               ))}
             </div>
+            {process.env.NEXT_PUBLIC_DEV_BYPASS_AUTH === 'true' && (
+              <button
+                type="button"
+                className="community-test-query-btn"
+                onClick={handleTestCommunityQuery}
+              >
+                Test Community Query
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -551,7 +691,7 @@ export default function CommunityPage() {
             </div>
             <div className="community-feed-header-right">
               {/* Manage Friends button for Personal Friends */}
-              {selectedCommunity.id === 'personal' && (
+              {(isPersonalFriendsCode(selectedCommunity.code) || selectedCommunity.id === 'personal') && (
                 <button 
                   className="community-manage-friends-btn"
                   onClick={() => setShowFriendsModal(true)}
@@ -1563,10 +1703,41 @@ const styles = `
     background: linear-gradient(135deg, rgba(139, 92, 246, 0.2), rgba(236, 72, 153, 0.2));
   }
   .community-group-emoji { font-size: 1.5rem; }
-  .community-group-info { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+  .community-group-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; justify-content: center; }
   .community-group-name { font-weight: 600; color: #e2e8f0; font-size: 0.9375rem; }
   .community-group-members { font-size: 0.75rem; color: #64748b; }
-  .community-group-arrow { color: #475569; }
+  .community-group-action { flex-shrink: 0; display: flex; align-items: center; }
+  .community-join-btn {
+    min-height: 44px;
+    min-width: 72px;
+    padding: 10px 16px;
+    border-radius: 12px;
+    font-size: 0.875rem;
+    font-weight: 600;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .community-join-btn.join {
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    color: white;
+  }
+  .community-join-btn.join:hover { filter: brightness(1.1); transform: scale(1.02); }
+  .community-join-btn.join:active { transform: scale(0.98); }
+  .community-join-btn.leave {
+    background: rgba(34, 197, 94, 0.12);
+    color: #22c55e;
+    border: 1px solid rgba(34, 197, 94, 0.3);
+  }
+  .community-join-btn.leave:hover { background: rgba(239, 68, 68, 0.12); color: #f87171; border-color: rgba(239, 68, 68, 0.35); }
+  .community-group-arrow { color: #475569; flex-shrink: 0; }
+  .community-inline-error { font-size: 0.8rem; color: #f87171; margin: 8px 0; }
+  .community-loading-text { font-size: 0.8rem; color: #64748b; margin: 8px 0; }
+  .community-test-query-btn {
+    margin-top: 12px; font-size: 0.75rem; padding: 8px 12px; background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; color: #94a3b8; cursor: pointer;
+  }
+  .community-test-query-btn:hover { background: rgba(255,255,255,0.08); color: #e2e8f0; }
 
   /* ============ EMPTY & REFRESH ============ */
   .community-empty-state {

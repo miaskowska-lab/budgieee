@@ -1,14 +1,9 @@
 import { supabase, isSupabaseConfigured } from './supabaseClient'
+import { getCurrentMonth } from './budgetRepo'
 
 // ============================================
 // HOME PAGE - Data Repository
-// Uses get_home_dashboard RPC for efficient stats loading
-// All stats are persisted in user_stats table via triggers
-// 
-// USER DATA OWNERSHIP:
-// All stats are user-specific. The RPC uses auth.uid() to
-// fetch only the current user's data. When RLS is enabled,
-// policies enforce user_id = auth.uid() on all tables.
+// Fetches stats directly from tables (no RPC needed)
 // ============================================
 
 export interface HomeDashboard {
@@ -33,7 +28,7 @@ export interface HomeStats {
   error: string | null
 }
 
-// Fetch all home dashboard stats via single RPC call
+// Fetch home dashboard stats directly from tables
 export async function getHomeDashboard(): Promise<{ data: HomeDashboard | null; error: string | null }> {
   if (!isSupabaseConfigured) {
     return {
@@ -52,27 +47,55 @@ export async function getHomeDashboard(): Promise<{ data: HomeDashboard | null; 
   }
   
   try {
-    const { data, error } = await supabase.rpc('get_home_dashboard')
-    
-    if (error) {
-      console.error('Error fetching home dashboard:', error)
-      return { data: null, error: error.message }
+    // Get current user
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      return { data: null, error: 'Not authenticated' }
     }
     
-    if (data?.error) {
-      return { data: null, error: data.error }
-    }
+    // Get user profile
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('email, full_name')
+      .eq('user_id', user.id)
+      .single()
+    
+    // Get current month budget
+    const currentMonth = getCurrentMonth()
+    const { data: budget } = await supabase
+      .from('budgets')
+      .select('total_budget')
+      .eq('month', currentMonth)
+      .maybeSingle()
+    
+    // Get total spent this month
+    const { data: expenses } = await supabase
+      .from('budget_expenses')
+      .select('amount')
+      .eq('month', currentMonth)
+    
+    const totalSpent = expenses?.reduce((sum, exp) => sum + Number(exp.amount), 0) || 0
+    
+    // Community stats (not connected yet - return 0)
+    // TODO: Connect when community feature uses Supabase
+    const communityPoints = 0
+    const dealsPosted = 0
+    const savedDeals = 0
+    
+    // Trips net balance (not connected yet - return 0)
+    // TODO: Connect when trips feature uses Supabase
+    const tripsNet = 0
     
     return {
       data: {
-        email: data.email || null,
-        displayName: data.display_name || null,
-        communityPoints: data.community_points || 0,
-        dealsPosted: data.deals_posted || 0,
-        savedDeals: data.saved_deals || 0,
-        tripsNet: data.trips_net || 0,
-        budgetTotal: data.budget_total || 0,
-        budgetSpent: data.budget_spent || 0,
+        email: profile?.email || user.email || null,
+        displayName: profile?.full_name || null,
+        communityPoints,
+        dealsPosted,
+        savedDeals,
+        tripsNet,
+        budgetTotal: budget?.total_budget || 0,
+        budgetSpent: totalSpent,
       },
       error: null,
     }
