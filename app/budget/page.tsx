@@ -69,6 +69,25 @@ function getInitials(email: string): string {
   return email.charAt(0).toUpperCase()
 }
 
+function formatMonthDisplay(monthStr: string): string {
+  const [year, month] = monthStr.split('-').map(Number)
+  const date = new Date(year, month - 1, 1)
+  return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+}
+
+function getAvailableMonths(): string[] {
+  const months: string[] = []
+  const now = new Date()
+  // Show last 12 months + current + next month
+  for (let i = -12; i <= 1; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() + i, 1)
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    months.push(`${y}-${m}-01`)
+  }
+  return months.reverse() // Most recent first
+}
+
 // Color palette for categories
 const COLOR_OPTIONS = [
   '#22c55e', // green
@@ -120,7 +139,9 @@ export default function BudgetPage() {
   const [categories, setCategories] = useState<BudgetCategory[]>([])
   const [localExpenses, setLocalExpenses] = useState<BudgetExpense[]>([]) // For dev mode
   const [dataLoading, setDataLoading] = useState(true)
-  const [currentMonth] = useState(getCurrentMonth())
+  const [currentMonth, setCurrentMonth] = useState(getCurrentMonth())
+  const [showMonthPicker, setShowMonthPicker] = useState(false)
+  const [showResetConfirm, setShowResetConfirm] = useState(false)
   
   // UI state
   const [showAddModal, setShowAddModal] = useState(false)
@@ -225,9 +246,11 @@ export default function BudgetPage() {
     return categoryData
   }, [categories, totalBudget, totalSpent])
 
-  // Weeks in current month
-  const now = new Date()
-  const weeks = useMemo(() => getWeeksInMonth(now.getFullYear(), now.getMonth()), [])
+  // Weeks in selected month
+  const weeks = useMemo(() => {
+    const [year, month] = currentMonth.split('-').map(Number)
+    return getWeeksInMonth(year, month - 1) // month is 0-indexed for Date
+  }, [currentMonth])
   const selectedWeek = weeks[selectedWeekIdx]
 
   // Expenses for selected week (from localExpenses in dev mode)
@@ -459,6 +482,38 @@ export default function BudgetPage() {
     }
   }, [user, devBypass, showToast, selectedCategory])
 
+  // Change month
+  const handleMonthChange = useCallback((newMonth: string) => {
+    setCurrentMonth(newMonth)
+    setShowMonthPicker(false)
+    // Reset view state
+    setSelectedWeekIdx(0)
+    setViewMode('month')
+    // In dev mode, filter expenses for the new month
+    if (!isSupabaseConfigured) {
+      setLocalExpenses(prev => prev.filter(e => e.month === newMonth))
+      // Reset spent amounts for categories (they'll be recalculated)
+      setCategories(prev => prev.map(c => ({ ...c, spent: 0 })))
+    }
+  }, [])
+
+  // Reset/Start new month - clears expenses but keeps categories with their budgets
+  const handleResetBudget = useCallback(() => {
+    // In dev mode: clear expenses, reset category spent to 0
+    if (!isSupabaseConfigured) {
+      setLocalExpenses([])
+      setCategories(prev => prev.map(c => ({ ...c, spent: 0 })))
+      showToast('Budget reset! Start fresh.')
+      setShowResetConfirm(false)
+      return
+    }
+    
+    // With Supabase: just reload data for current month (expenses are per-month anyway)
+    loadData()
+    showToast('Budget refreshed!')
+    setShowResetConfirm(false)
+  }, [loadData, showToast])
+
   // Loading state
   if (authLoading) {
     return (
@@ -498,10 +553,114 @@ export default function BudgetPage() {
             </p>
           </div>
         </div>
-        <div className="budget-header-avatar">
-          {getInitials(user?.email || 'U')}
+        <div className="budget-header-actions">
+          <button 
+            className="budget-reset-btn"
+            onClick={() => setShowResetConfirm(true)}
+            title="Reset budget for new month"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M1 4v6h6M23 20v-6h-6"/>
+              <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/>
+            </svg>
+          </button>
+          <div className="budget-header-avatar">
+            {getInitials(user?.email || 'U')}
+          </div>
         </div>
       </header>
+
+      {/* Month Selector Bar */}
+      <div className="budget-month-bar">
+        <button 
+          className="budget-month-nav-btn"
+          onClick={() => {
+            const months = getAvailableMonths()
+            const idx = months.indexOf(currentMonth)
+            if (idx < months.length - 1) {
+              handleMonthChange(months[idx + 1])
+            }
+          }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M15 18l-6-6 6-6" />
+          </svg>
+        </button>
+        <button 
+          className="budget-month-selector"
+          onClick={() => setShowMonthPicker(!showMonthPicker)}
+        >
+          <span>{formatMonthDisplay(currentMonth)}</span>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M6 9l6 6 6-6" />
+          </svg>
+        </button>
+        <button 
+          className="budget-month-nav-btn"
+          onClick={() => {
+            const months = getAvailableMonths()
+            const idx = months.indexOf(currentMonth)
+            if (idx > 0) {
+              handleMonthChange(months[idx - 1])
+            }
+          }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M9 18l6-6-6-6" />
+          </svg>
+        </button>
+      </div>
+
+      {/* Month Picker Dropdown */}
+      {showMonthPicker && (
+        <div className="budget-month-dropdown">
+          {getAvailableMonths().map(month => (
+            <button
+              key={month}
+              className={`budget-month-option ${month === currentMonth ? 'active' : ''}`}
+              onClick={() => handleMonthChange(month)}
+            >
+              {formatMonthDisplay(month)}
+              {month === getCurrentMonth() && <span className="budget-month-current-badge">Current</span>}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Reset Confirmation Modal */}
+      {showResetConfirm && (
+        <div className="budget-modal-overlay" onClick={() => setShowResetConfirm(false)}>
+          <div className="budget-modal budget-modal-small" onClick={e => e.stopPropagation()}>
+            <div className="budget-modal-header">
+              <h2>Reset Budget?</h2>
+              <button className="budget-modal-close" onClick={() => setShowResetConfirm(false)}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+            <div className="budget-reset-content">
+              <div className="budget-reset-icon">🔄</div>
+              <p>This will clear all expenses for the current month and reset your spending to $0.</p>
+              <p className="budget-reset-note">Your categories and budget limits will be kept.</p>
+            </div>
+            <div className="budget-reset-actions">
+              <button 
+                className="budget-cancel-btn"
+                onClick={() => setShowResetConfirm(false)}
+              >
+                Cancel
+              </button>
+              <button 
+                className="budget-confirm-reset-btn"
+                onClick={handleResetBudget}
+              >
+                Reset Budget
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <section className="budget-section">
         {/* Total Budget */}
@@ -1501,6 +1660,7 @@ const styles = `
     background: linear-gradient(180deg, #050d18 0%, #0a1628 15%, #142136 35%, #1a2d4a 50%, #142136 65%, #0a1628 85%, #050d18 100%);
     color: #e2e8f0;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    position: relative;
   }
 
   /* Loading */
@@ -1595,11 +1755,188 @@ const styles = `
   .budget-back-btn:hover { background: rgba(255,255,255,0.1); color: #e2e8f0; }
   .budget-header-title { font-size: 1.25rem; font-weight: 600; color: #f1f5f9; margin: 0; }
   .budget-header-subtitle { font-size: 0.75rem; color: #64748b; margin: 0; }
+  .budget-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
   .budget-header-avatar {
     width: 40px; height: 40px; border-radius: 50%;
     background: linear-gradient(135deg, #3b82f6, #2563eb);
     display: flex; align-items: center; justify-content: center;
     font-size: 0.875rem; font-weight: 600; color: #fff;
+  }
+  .budget-reset-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 12px;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.08);
+    color: #94a3b8;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .budget-reset-btn:hover {
+    background: rgba(59, 130, 246, 0.15);
+    border-color: rgba(59, 130, 246, 0.3);
+    color: #60a5fa;
+  }
+
+  /* Month Selector Bar */
+  .budget-month-bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 12px 20px;
+    background: rgba(255,255,255,0.02);
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+  }
+  .budget-month-nav-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    background: rgba(255,255,255,0.06);
+    border: none;
+    color: #94a3b8;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .budget-month-nav-btn:hover {
+    background: rgba(255,255,255,0.1);
+    color: #e2e8f0;
+  }
+  .budget-month-selector {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    background: rgba(59, 130, 246, 0.1);
+    border: 1px solid rgba(59, 130, 246, 0.2);
+    border-radius: 20px;
+    color: #60a5fa;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .budget-month-selector:hover {
+    background: rgba(59, 130, 246, 0.15);
+    border-color: rgba(59, 130, 246, 0.3);
+  }
+
+  /* Month Dropdown */
+  .budget-month-dropdown {
+    position: absolute;
+    top: 140px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 220px;
+    max-height: 300px;
+    overflow-y: auto;
+    background: linear-gradient(180deg, #1a2942 0%, #0f1d2e 100%);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 16px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    z-index: 100;
+    padding: 8px;
+  }
+  .budget-month-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 12px 14px;
+    background: none;
+    border: none;
+    border-radius: 10px;
+    color: #cbd5e1;
+    font-size: 0.875rem;
+    cursor: pointer;
+    text-align: left;
+    transition: all 0.15s;
+  }
+  .budget-month-option:hover {
+    background: rgba(255,255,255,0.06);
+  }
+  .budget-month-option.active {
+    background: rgba(59, 130, 246, 0.15);
+    color: #60a5fa;
+    font-weight: 600;
+  }
+  .budget-month-current-badge {
+    font-size: 0.65rem;
+    padding: 2px 6px;
+    background: rgba(34, 197, 94, 0.2);
+    color: #22c55e;
+    border-radius: 4px;
+    font-weight: 500;
+  }
+
+  /* Reset Modal Content */
+  .budget-reset-content {
+    padding: 20px;
+    text-align: center;
+  }
+  .budget-reset-icon {
+    font-size: 48px;
+    margin-bottom: 16px;
+  }
+  .budget-reset-content p {
+    color: #94a3b8;
+    font-size: 0.9375rem;
+    line-height: 1.5;
+    margin: 0 0 8px 0;
+  }
+  .budget-reset-note {
+    font-size: 0.8125rem !important;
+    color: #64748b !important;
+  }
+  .budget-reset-actions {
+    display: flex;
+    gap: 12px;
+    padding: 0 20px 20px;
+  }
+  .budget-cancel-btn {
+    flex: 1;
+    padding: 12px;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 12px;
+    color: #94a3b8;
+    font-size: 0.9375rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .budget-cancel-btn:hover {
+    background: rgba(255,255,255,0.1);
+    color: #e2e8f0;
+  }
+  .budget-confirm-reset-btn {
+    flex: 1;
+    padding: 12px;
+    background: linear-gradient(135deg, #f59e0b, #d97706);
+    border: none;
+    border-radius: 12px;
+    color: white;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .budget-confirm-reset-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
+  }
+  .budget-modal-small {
+    max-width: 360px;
   }
 
   /* Section */
