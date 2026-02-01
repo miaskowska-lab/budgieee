@@ -7,6 +7,7 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts'
 import { supabase, isSupabaseConfigured } from '@/lib/supabaseClient'
 import { useSession, isDevBypassEnabled } from '@/lib/useSession'
 import { isUserAuthenticated, getLoginRedirectPath } from '@/lib/authGuard'
+import { useNavVisibility } from '@/components/BottomNav'
 import {
   ensureBudgetSeed,
   getBudget,
@@ -34,13 +35,29 @@ function formatCurrency(amount: number): string {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(Math.abs(amount))
 }
 
+// Parse date string as LOCAL time, not UTC
+// "2026-02-01" or "2026-02-01T10:30" should both be interpreted in local timezone
+function parseLocalDate(dateStr: string): Date {
+  // If it's a date-only string (YYYY-MM-DD), append T00:00:00 to parse as local time
+  // Without the time part, JS parses "YYYY-MM-DD" as UTC midnight, causing timezone shift bugs
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    return new Date(dateStr + 'T00:00:00')
+  }
+  // If it contains 'T', it's already a datetime string that parses as local time
+  if (dateStr.includes('T')) {
+    return new Date(dateStr)
+  }
+  // For other formats (ISO with Z suffix), parse normally
+  return new Date(dateStr)
+}
+
 function formatDate(dateStr: string): string {
-  const date = new Date(dateStr)
+  const date = parseLocalDate(dateStr)
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
 function formatDateTime(dateStr: string): string {
-  const date = new Date(dateStr)
+  const date = parseLocalDate(dateStr)
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + 
     ', ' + date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
 }
@@ -147,8 +164,9 @@ export default function BudgetPage() {
   // Data state
   const [totalBudget, setTotalBudget] = useState(0) // Starts at $0, user sets their own
   const [categories, setCategories] = useState<BudgetCategory[]>([])
-  const [allLocalExpenses, setAllLocalExpenses] = useState<BudgetExpense[]>([]) // ALL expenses across all months
-  const [allLocalCategories, setAllLocalCategories] = useState<BudgetCategory[]>([]) // ALL categories across all months
+  const [allLocalExpenses, setAllLocalExpenses] = useState<BudgetExpense[]>([]) // ALL expenses across all months (dev mode)
+  const [allLocalCategories, setAllLocalCategories] = useState<BudgetCategory[]>([]) // ALL categories across all months (dev mode)
+  const [monthExpenses, setMonthExpenses] = useState<BudgetExpense[]>([]) // Expenses for current month (Supabase mode)
   const [dataLoading, setDataLoading] = useState(true)
   const [currentMonth, setCurrentMonth] = useState(getCurrentMonth())
   const [showMonthPicker, setShowMonthPicker] = useState(false)
@@ -160,6 +178,13 @@ export default function BudgetPage() {
   const [showManageBudgetModal, setShowManageBudgetModal] = useState(false)
   const [editingTotal, setEditingTotal] = useState(false)
   const [selectedCategory, setSelectedCategory] = useState<BudgetCategory | null>(null)
+  
+  // Hide global nav when any modal/drawer is open
+  const { setHidden } = useNavVisibility()
+  const anyModalOpen = showAddModal || showNewCategoryModal || showManageBudgetModal || selectedCategory !== null
+  useEffect(() => {
+    setHidden(anyModalOpen)
+  }, [anyModalOpen, setHidden])
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const [viewMode, setViewMode] = useState<'month' | 'week'>('month')
   const [selectedWeekIdx, setSelectedWeekIdx] = useState(0)
@@ -209,6 +234,27 @@ export default function BudgetPage() {
       setCategories([])
     }
     
+    // Fetch all expenses for this month (needed for weekly view)
+    // Use category IDs to ensure we get the right expenses
+    if (categoriesData && categoriesData.length > 0) {
+      try {
+        const categoryIds = categoriesData.map((c: BudgetCategory) => c.id)
+        const { data: expensesData, error: expError } = await supabase
+          .from('budget_expenses')
+          .select('*')
+          .in('category_id', categoryIds)
+          .order('occurred_at', { ascending: false })
+        
+        if (!expError && expensesData) {
+          setMonthExpenses(expensesData)
+        }
+      } catch (err) {
+        console.error('Error fetching month expenses:', err)
+      }
+    } else {
+      setMonthExpenses([])
+    }
+    
     setDataLoading(false)
   }, [user, devBypass, currentMonth, showToast])
 
@@ -244,11 +290,15 @@ export default function BudgetPage() {
     }
   }, [currentMonth, allLocalCategories, allLocalExpenses])
 
-  // Computed: expenses for current month (from allLocalExpenses in dev mode)
-  const localExpenses = useMemo(() => 
-    allLocalExpenses.filter(e => e.month === currentMonth),
-    [allLocalExpenses, currentMonth]
-  )
+  // Computed: expenses for current month
+  // In dev mode: filter from allLocalExpenses
+  // In Supabase mode: use monthExpenses (fetched from DB)
+  const localExpenses = useMemo(() => {
+    if (!isSupabaseConfigured) {
+      return allLocalExpenses.filter(e => e.month === currentMonth)
+    }
+    return monthExpenses
+  }, [allLocalExpenses, currentMonth, monthExpenses])
 
   // Calculated values
   const totalSpent = useMemo(() => 
@@ -308,17 +358,54 @@ export default function BudgetPage() {
   }, [currentMonth])
   const selectedWeek = weeks[selectedWeekIdx]
 
-  // Expenses for selected week (from localExpenses in dev mode)
+  // Find which week index contains a given date
+  const getCurrentWeekIndex = useCallback((date: Date = new Date()): number => {
+    const dayOfMonth = date.getDate()
+    for (let i = 0; i < weeks.length; i++) {
+      if (dayOfMonth >= weeks[i].start.getDate() && dayOfMonth <= weeks[i].end.getDate()) {
+        return i
+      }
+    }
+    return 0 // Fallback to first week
+  }, [weeks])
+
+  // Expenses for selected week
   const weekExpenses = useMemo(() => {
-    if (!selectedWeek) return []
-    // Use local date comparison to avoid timezone issues
-    const startTime = selectedWeek.start.getTime()
-    const endTime = new Date(selectedWeek.end.getFullYear(), selectedWeek.end.getMonth(), selectedWeek.end.getDate(), 23, 59, 59, 999).getTime()
+    if (!selectedWeek || localExpenses.length === 0) return []
+    
+    // Get the week's day range (1-7, 8-14, etc.)
+    const weekStartDay = selectedWeek.start.getDate()
+    const weekEndDay = selectedWeek.end.getDate()
+    const weekMonth = selectedWeek.start.getMonth() // 0-indexed
+    const weekYear = selectedWeek.start.getFullYear()
     
     return localExpenses.filter((e) => {
-      const expDate = new Date(e.occurred_at)
-      const expTime = expDate.getTime()
-      return expTime >= startTime && expTime <= endTime
+      // Parse the occurred_at date - handle multiple formats
+      const occurredAt = e.occurred_at
+      if (!occurredAt) return false
+      
+      let expYear: number, expMonth: number, expDay: number
+      
+      // Extract date parts from the string (handles "2026-02-01", "2026-02-01T00:00:00", "2026-02-01T00:00:00+00:00", etc.)
+      const dateMatch = occurredAt.match(/^(\d{4})-(\d{2})-(\d{2})/)
+      if (dateMatch) {
+        expYear = parseInt(dateMatch[1], 10)
+        expMonth = parseInt(dateMatch[2], 10) - 1 // Convert to 0-indexed
+        expDay = parseInt(dateMatch[3], 10)
+      } else {
+        // Fallback: try parsing as Date
+        const d = new Date(occurredAt)
+        if (isNaN(d.getTime())) return false
+        expYear = d.getFullYear()
+        expMonth = d.getMonth()
+        expDay = d.getDate()
+      }
+      
+      // Check if expense is in the same month/year and within the week's day range
+      return expYear === weekYear && 
+             expMonth === weekMonth && 
+             expDay >= weekStartDay && 
+             expDay <= weekEndDay
     })
   }, [localExpenses, selectedWeek])
 
@@ -421,12 +508,16 @@ export default function BudgetPage() {
       return
     }
     
-    const { error } = await addExpense(categoryId, title, amount, date, note)
+    const { data: newExpenseData, error } = await addExpense(categoryId, title, amount, date, note)
     
     if (error) {
       showToast('Failed to add expense', 'error')
     } else {
       showToast('Expense added!')
+      // Optimistically add to monthExpenses for immediate weekly view update
+      if (newExpenseData) {
+        setMonthExpenses((prev: BudgetExpense[]) => [newExpenseData, ...prev])
+      }
       loadData() // Refresh data
     }
   }, [user, devBypass, currentMonth, loadData, showToast])
@@ -451,6 +542,8 @@ export default function BudgetPage() {
       showToast('Failed to delete expense', 'error')
     } else {
       showToast('Expense deleted')
+      // Optimistically remove from monthExpenses for immediate weekly view update
+      setMonthExpenses((prev: BudgetExpense[]) => prev.filter(e => e.id !== expenseId))
       loadData() // Refresh data
     }
   }, [user, devBypass, loadData, showToast])
@@ -534,7 +627,7 @@ export default function BudgetPage() {
         c.id === categoryId ? { ...c, ...updates } : c
       ))
       if (selectedCategory?.id === categoryId) {
-        setSelectedCategory(prev => prev ? { ...prev, ...updates } : null)
+        setSelectedCategory((prev: BudgetCategory | null) => prev ? { ...prev, ...updates } : null)
       }
       showToast('Category updated!')
       return
@@ -549,7 +642,7 @@ export default function BudgetPage() {
         c.id === categoryId ? { ...c, ...updates } : c
       ))
       if (selectedCategory?.id === categoryId) {
-        setSelectedCategory(prev => prev ? { ...prev, ...updates } : null)
+        setSelectedCategory((prev: BudgetCategory | null) => prev ? { ...prev, ...updates } : null)
       }
     }
   }, [user, devBypass, showToast, selectedCategory])
@@ -558,9 +651,26 @@ export default function BudgetPage() {
   const handleMonthChange = useCallback((newMonth: string) => {
     setCurrentMonth(newMonth)
     setShowMonthPicker(false)
-    // Reset view state
-    setSelectedWeekIdx(0)
-    setViewMode('month')
+    // Reset week index to first week of new month (or last week if going to current month)
+    // Don't reset viewMode - let user stay in weekly view if they prefer
+    if (newMonth === getCurrentMonth()) {
+      // If viewing current month, select current week
+      const [year, month] = newMonth.split('-').map(Number)
+      const newWeeks = getWeeksInMonth(year, month - 1)
+      const today = new Date()
+      const todayDay = today.getDate()
+      let foundIdx = 0
+      for (let i = 0; i < newWeeks.length; i++) {
+        if (todayDay >= newWeeks[i].start.getDate() && todayDay <= newWeeks[i].end.getDate()) {
+          foundIdx = i
+          break
+        }
+      }
+      setSelectedWeekIdx(foundIdx)
+    } else {
+      // For other months, start at first week
+      setSelectedWeekIdx(0)
+    }
     // Note: Categories and expenses for the new month are recalculated 
     // automatically by the useEffect that watches currentMonth
   }, [])
@@ -845,7 +955,13 @@ export default function BudgetPage() {
           <button
             type="button"
             className={`budget-view-toggle-btn ${viewMode === 'week' ? 'active' : ''}`}
-            onClick={() => setViewMode('week')}
+            onClick={() => {
+              setViewMode('week')
+              // Auto-select the week containing today (if viewing current month)
+              if (currentMonth === getCurrentMonth()) {
+                setSelectedWeekIdx(getCurrentWeekIndex())
+              }
+            }}
           >
             By Week
           </button>
@@ -952,7 +1068,12 @@ export default function BudgetPage() {
                   <path d="M15 18l-6-6 6-6" />
                 </svg>
               </button>
-              <span className="budget-week-label">{selectedWeek?.label ?? 'No weeks'}</span>
+              <div className="budget-week-label-container">
+                <span className="budget-week-label">{selectedWeek?.label ?? 'No weeks'}</span>
+                {currentMonth === getCurrentMonth() && selectedWeekIdx === getCurrentWeekIndex() && (
+                  <span className="budget-week-current-badge">This Week</span>
+                )}
+              </div>
               <button
                 type="button"
                 className="budget-week-nav-btn"
@@ -963,6 +1084,36 @@ export default function BudgetPage() {
                   <path d="M9 18l6-6-6-6" />
                 </svg>
               </button>
+            </div>
+            
+            {/* Quick navigation hint + Today button */}
+            <div className="budget-week-hint-row">
+              <span className="budget-week-hint">Use month selector above to view other months</span>
+              {(currentMonth !== getCurrentMonth() || selectedWeekIdx !== getCurrentWeekIndex()) && (
+                <button
+                  type="button"
+                  className="budget-today-btn"
+                  onClick={() => {
+                    setCurrentMonth(getCurrentMonth())
+                    setSelectedWeekIdx(getCurrentWeekIndex())
+                  }}
+                >
+                  Today
+                </button>
+              )}
+            </div>
+            
+            {/* Week indicator dots */}
+            <div className="budget-week-dots">
+              {weeks.map((_, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  className={`budget-week-dot ${idx === selectedWeekIdx ? 'active' : ''} ${currentMonth === getCurrentMonth() && idx === getCurrentWeekIndex() ? 'current' : ''}`}
+                  onClick={() => setSelectedWeekIdx(idx)}
+                  title={weeks[idx]?.label}
+                />
+              ))}
             </div>
 
             {/* Weekly Category Cards */}
@@ -1021,7 +1172,7 @@ export default function BudgetPage() {
                         <div className="budget-week-expense-info">
                           <span className="budget-week-expense-title">{exp.title}</span>
                           <span className="budget-week-expense-date">
-                            {new Date(exp.occurred_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                            {formatDate(exp.occurred_at)}
                           </span>
                         </div>
                         <span className="budget-week-expense-amount">{formatCurrency(exp.amount)}</span>
@@ -1095,7 +1246,16 @@ function AddExpenseModal({ categories, onClose, onSubmit, preselectedCategoryId 
   const [title, setTitle] = useState('')
   const [amount, setAmount] = useState('')
   const [categoryId, setCategoryId] = useState(preselectedCategoryId || categories[0]?.id || '')
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 16))
+  // Use local time for the date picker (avoid UTC conversion issues)
+  const [date, setDate] = useState(() => {
+    const now = new Date()
+    const year = now.getFullYear()
+    const month = String(now.getMonth() + 1).padStart(2, '0')
+    const day = String(now.getDate()).padStart(2, '0')
+    const hours = String(now.getHours()).padStart(2, '0')
+    const minutes = String(now.getMinutes()).padStart(2, '0')
+    return `${year}-${month}-${day}T${hours}:${minutes}`
+  })
   const [note, setNote] = useState('')
   const [error, setError] = useState('')
 
@@ -1108,7 +1268,9 @@ function AddExpenseModal({ categories, onClose, onSubmit, preselectedCategoryId 
     if (isNaN(amountNum) || amountNum <= 0) { setError('Enter a valid amount'); return }
     if (!categoryId) { setError('Select a category'); return }
     
-    onSubmit(categoryId, title.trim(), amountNum, new Date(date).toISOString(), note.trim() || undefined)
+    // Pass the date directly without UTC conversion - the date picker value is already in local time format
+    // Format: "2026-02-01T10:30" - we just need the date part for storage
+    onSubmit(categoryId, title.trim(), amountNum, date, note.trim() || undefined)
     onClose()
   }
 
@@ -1420,7 +1582,7 @@ function CategoryHistoryDrawer({
       if (isDevMode) {
         const categoryExpenses = localExpenses
           .filter(e => e.category_id === category.id)
-          .sort((a, b) => new Date(b.occurred_at).getTime() - new Date(a.occurred_at).getTime())
+          .sort((a, b) => parseLocalDate(b.occurred_at).getTime() - parseLocalDate(a.occurred_at).getTime())
         setExpenses(categoryExpenses)
         setLoading(false)
         return
@@ -2212,10 +2374,81 @@ const styles = `
     opacity: 0.3;
     cursor: not-allowed;
   }
+  .budget-week-label-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
   .budget-week-label {
     font-size: 1rem;
     font-weight: 600;
     color: #e2e8f0;
+  }
+  .budget-week-current-badge {
+    font-size: 0.65rem;
+    padding: 2px 8px;
+    background: rgba(34, 197, 94, 0.2);
+    color: #22c55e;
+    border-radius: 4px;
+    font-weight: 500;
+  }
+  .budget-week-dots {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  .budget-week-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.15);
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .budget-week-dot:hover {
+    background: rgba(255,255,255,0.3);
+    transform: scale(1.2);
+  }
+  .budget-week-dot.active {
+    background: #3b82f6;
+    box-shadow: 0 0 8px rgba(59, 130, 246, 0.5);
+  }
+  .budget-week-dot.current {
+    border: 2px solid #22c55e;
+  }
+  .budget-week-dot.current.active {
+    background: #22c55e;
+    box-shadow: 0 0 8px rgba(34, 197, 94, 0.5);
+  }
+  .budget-week-hint-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+    padding: 0 4px;
+  }
+  .budget-week-hint {
+    font-size: 0.7rem;
+    color: #64748b;
+    font-style: italic;
+  }
+  .budget-today-btn {
+    padding: 6px 14px;
+    background: rgba(34, 197, 94, 0.15);
+    border: 1px solid rgba(34, 197, 94, 0.3);
+    border-radius: 8px;
+    color: #22c55e;
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .budget-today-btn:hover {
+    background: rgba(34, 197, 94, 0.25);
+    border-color: rgba(34, 197, 94, 0.5);
   }
 
   /* Weekly Expense Items */

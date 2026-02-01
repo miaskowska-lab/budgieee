@@ -1,4 +1,5 @@
 import '@/styles/globals.css'
+import BottomNav, { NavVisibilityProvider } from '@/components/BottomNav'
 
 export const metadata = {
   title: 'Budgieee',
@@ -12,7 +13,12 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <NavVisibilityProvider>
+          {children}
+          <BottomNav />
+        </NavVisibilityProvider>
+      </body>
     </html>
   )
 }

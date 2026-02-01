@@ -153,7 +153,7 @@ export default function LoginPage() {
   if (sessionLoading) {
     return (
       <div className="login-page">
-        <style>{styles}</style>
+        <style dangerouslySetInnerHTML={{ __html: styles }} />
         <div className="login-loading">
           <div className="login-spinner" />
           <p>Loading...</p>
@@ -164,7 +164,7 @@ export default function LoginPage() {
 
   return (
     <div className="login-page">
-      <style>{styles}</style>
+      <style dangerouslySetInnerHTML={{ __html: styles }} />
 
       <div className="login-container">
         {/* Logo */}

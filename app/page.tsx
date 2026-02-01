@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { supabase, isSupabaseConfigured } from '@/lib/supabaseClient'
 import { useSession, isDevBypassEnabled } from '@/lib/useSession'
 import { fetchAllHomeStats } from '@/lib/homeRepo'
+import { useNavVisibility } from '@/components/BottomNav'
 import type { User } from '@supabase/supabase-js'
 
 // ============================================
@@ -27,6 +28,12 @@ export default function Home() {
   const [showUserPanel, setShowUserPanel] = useState(false)
   const [panelView, setPanelView] = useState<'account' | 'settings'>('account')
   const [signingOut, setSigningOut] = useState(false)
+  
+  // Hide global nav when user panel is open
+  const { setHidden } = useNavVisibility()
+  useEffect(() => {
+    setHidden(showUserPanel)
+  }, [showUserPanel, setHidden])
 
   // User settings (stored in localStorage)
   const [displayName, setDisplayName] = useState('')
@@ -258,45 +265,6 @@ export default function Home() {
           </button>
         </div>
       )}
-
-      {/* ============ BOTTOM NAV ============ */}
-      <nav className="home-bottom-nav">
-        <button className="home-nav-item" onClick={() => router.push('/budget')}>
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <rect x="2" y="3" width="20" height="14" rx="2"/>
-            <line x1="8" y1="21" x2="16" y2="21"/>
-            <line x1="12" y1="17" x2="12" y2="21"/>
-          </svg>
-          <span>Budget</span>
-        </button>
-
-        <button className="home-nav-item active home-nav-center" onClick={() => {}}>
-          <div className="home-nav-center-icon">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
-              <polyline points="9 22 9 12 15 12 15 22"/>
-            </svg>
-          </div>
-          <span>Home</span>
-        </button>
-
-        <button className="home-nav-item" onClick={() => router.push('/trips')}>
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
-            <circle cx="9" cy="7" r="4"/>
-            <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
-            <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
-          </svg>
-          <span>Trips</span>
-        </button>
-
-        <button className="home-nav-item" onClick={() => router.push('/community')}>
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
-          </svg>
-          <span>Deals</span>
-        </button>
-      </nav>
 
       {/* ============ USER PANEL OVERLAY ============ */}
       {showUserPanel && (
@@ -813,56 +781,6 @@ const styles = `
     flex-shrink: 0;
   }
   .home-card:hover .home-card-arrow { color: #94a3b8; }
-
-  /* ============ BOTTOM NAV ============ */
-  .home-bottom-nav {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    display: flex;
-    align-items: flex-end;
-    justify-content: space-around;
-    padding: 12px 16px 20px;
-    background: linear-gradient(180deg, rgba(10, 22, 40, 0.95), rgba(5, 13, 24, 0.98));
-    border-top: 1px solid rgba(255,255,255,0.08);
-    backdrop-filter: blur(20px);
-    z-index: 100;
-  }
-  .home-nav-item {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 4px;
-    padding: 8px 16px;
-    background: none;
-    border: none;
-    color: #64748b;
-    font-size: 0.6875rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-  .home-nav-item:hover { color: #94a3b8; }
-  .home-nav-item.active { color: #34d399; }
-  .home-nav-center {
-    margin-top: -20px;
-  }
-  .home-nav-center-icon {
-    width: 52px;
-    height: 52px;
-    background: linear-gradient(135deg, #10b981, #059669);
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: white;
-    box-shadow: 0 4px 20px rgba(16, 185, 129, 0.4);
-    border: 3px solid rgba(10, 22, 40, 0.8);
-  }
-  .home-nav-item.active.home-nav-center .home-nav-center-icon {
-    box-shadow: 0 4px 24px rgba(16, 185, 129, 0.5);
-  }
 
   /* ============ USER PANEL ============ */
   .home-panel-overlay {

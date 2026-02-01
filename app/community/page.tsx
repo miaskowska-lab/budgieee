@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useSession, isDevBypassEnabled } from '@/lib/useSession'
 import { isUserAuthenticated, getLoginRedirectPath } from '@/lib/authGuard'
+import { useNavVisibility } from '@/components/BottomNav'
 import { getVisibleCommunitiesWithCounts, joinCommunity, leaveCommunity, createInvite, isPersonalFriendsCode } from '@/lib/communityRepo'
 import { isSupabaseConfigured } from '@/lib/supabaseClient'
 
@@ -148,6 +149,12 @@ export default function CommunityPage() {
   
   // UI state
   const [showNewPostModal, setShowNewPostModal] = useState(false)
+  
+  // Hide global nav when modal is open
+  const { setHidden } = useNavVisibility()
+  useEffect(() => {
+    setHidden(showNewPostModal)
+  }, [showNewPostModal, setHidden])
   const [showActionMenu, setShowActionMenu] = useState(false)
   const [showCommentsModal, setShowCommentsModal] = useState<string | null>(null)
   const [showFriendsModal, setShowFriendsModal] = useState(false)
@@ -1924,7 +1931,7 @@ const styles = `
   /* ============ FLOATING ACTION BUTTON ============ */
   .community-fab-container {
     position: fixed;
-    bottom: 24px;
+    bottom: 88px; /* Above bottom nav (72px) + spacing */
     right: 20px;
     z-index: 100;
   }

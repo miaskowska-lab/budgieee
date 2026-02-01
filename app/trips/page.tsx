@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useSession, isDevBypassEnabled } from '@/lib/useSession'
 import { isUserAuthenticated, getLoginRedirectPath } from '@/lib/authGuard'
+import { useNavVisibility } from '@/components/BottomNav'
 
 // ============================================
 // STUB BACKEND - Works without Supabase
@@ -41,6 +42,8 @@ interface GroupMember {
   profile: Profile
 }
 
+type SplitMode = 'equal' | 'exact' | 'percent'
+
 interface Expense {
   id: string
   description: string
@@ -50,6 +53,13 @@ interface Expense {
   group_id: string | null
   created_by: string
   created_at: string
+  split_mode: SplitMode
+  split_meta: {
+    mode: SplitMode
+    participants: string[]
+    values?: number[]
+    percentages?: number[]
+  } | null
   splits: ExpenseSplit[]
 }
 
@@ -145,6 +155,13 @@ export default function TripsPage() {
   const [showAddModal, setShowAddModal] = useState(false)
   const [showAddFriendModal, setShowAddFriendModal] = useState(false)
   const [showCreateGroupModal, setShowCreateGroupModal] = useState(false)
+  
+  // Hide global nav when any modal is open
+  const { setHidden } = useNavVisibility()
+  const anyModalOpen = showAddModal || showAddFriendModal || showCreateGroupModal
+  useEffect(() => {
+    setHidden(anyModalOpen)
+  }, [anyModalOpen, setHidden])
   const [expandedGroup, setExpandedGroup] = useState<string | null>(null)
   const [groupDetailTab, setGroupDetailTab] = useState<'members' | 'activity'>('members')
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
@@ -295,24 +312,78 @@ export default function TripsPage() {
     setShowAddFriendModal(false)
   }, [friends, pendingInvites, showToast])
 
-  // Create expense (stub)
+  // Create expense (stub) - supports equal, exact, and percent split modes
   const handleCreateExpense = useCallback((
     description: string,
     amount: number,
     paidBy: string,
     splitUserIds: string[],
+    splitMode: SplitMode,
+    splitValues: number[],
     groupId?: string
   ) => {
-    // Calculate equal splits with proper rounding
     const numSplits = splitUserIds.length
-    const baseShare = Math.floor((amount * 100) / numSplits) / 100
-    const remainder = Math.round((amount - baseShare * numSplits) * 100)
+    let shares: number[] = []
+
+    if (splitMode === 'equal') {
+      // Equal split with proper rounding (distribute remainder cents)
+      const amountCents = Math.round(amount * 100)
+      const baseShareCents = Math.floor(amountCents / numSplits)
+      const remainderCents = amountCents - (baseShareCents * numSplits)
+
+      shares = splitUserIds.map((_, index) => 
+        index < remainderCents 
+          ? (baseShareCents + 1) / 100 
+          : baseShareCents / 100
+      )
+    } else if (splitMode === 'exact') {
+      // Exact amounts - use provided values directly
+      shares = splitValues
+    } else if (splitMode === 'percent') {
+      // Percent split - convert to amounts with proper rounding
+      const amountCents = Math.round(amount * 100)
+      const computedCents: number[] = []
+      const fractionalParts: number[] = []
+      
+      // First pass: compute base cents and track fractional parts
+      splitValues.forEach(pct => {
+        const exactCents = (pct / 100) * amountCents
+        const floorCents = Math.floor(exactCents)
+        computedCents.push(floorCents)
+        fractionalParts.push(exactCents - floorCents)
+      })
+      
+      // Distribute remainder cents to largest fractional parts
+      let remainder = amountCents - computedCents.reduce((a, b) => a + b, 0)
+      while (remainder > 0) {
+        let maxIdx = 0
+        let maxFrac = -1
+        fractionalParts.forEach((frac, idx) => {
+          if (frac > maxFrac) {
+            maxFrac = frac
+            maxIdx = idx
+          }
+        })
+        computedCents[maxIdx]++
+        fractionalParts[maxIdx] = -1 // Mark as used
+        remainder--
+      }
+      
+      shares = computedCents.map(cents => cents / 100)
+    }
 
     const splits: ExpenseSplit[] = splitUserIds.map((userId, index) => ({
       id: generateId(),
       user_id: userId,
-      share: index < remainder ? baseShare + 0.01 : baseShare,
+      share: shares[index],
     }))
+
+    // Build split_meta based on mode
+    const split_meta = splitMode === 'equal' 
+      ? { mode: splitMode, participants: splitUserIds }
+      : splitMode === 'exact'
+        ? { mode: splitMode, participants: splitUserIds, values: splitValues }
+        : { mode: splitMode, participants: splitUserIds, percentages: splitValues }
 
     const newExpense: Expense = {
       id: generateId(),
@@ -323,6 +394,8 @@ export default function TripsPage() {
       group_id: groupId || null,
       created_by: user.user_id,
       created_at: new Date().toISOString(),
+      split_mode: splitMode,
+      split_meta,
       splits,
     }
 
@@ -763,6 +836,9 @@ export default function TripsPage() {
                                 {groupExpenses.map(expense => {
                                   const isPayer = expense.paid_by === user.user_id
                                   const myShare = expense.splits.find(s => s.user_id === user.user_id)?.share || 0
+                                  const splitModeLabel = expense.split_mode === 'exact' ? 'Exact' 
+                                    : expense.split_mode === 'percent' ? 'Percent' 
+                                    : 'Equal'
                                   
                                   return (
                                     <div key={expense.id} className="trips-group-expense-item">
@@ -778,6 +854,7 @@ export default function TripsPage() {
                                           <span className="trips-group-expense-payer">
                                             {getName(expense.paid_by)} paid
                                           </span>
+                                          <span className="trips-group-expense-mode">{splitModeLabel}</span>
                                           <span className="trips-group-expense-date">{formatDate(expense.created_at)}</span>
                                         </div>
                                         <div className="trips-group-expense-split">
@@ -829,6 +906,9 @@ export default function TripsPage() {
             {expenses.map(expense => {
               const isPayer = expense.paid_by === user.user_id
               const myShare = expense.splits.find(s => s.user_id === user.user_id)?.share || 0
+              const splitModeLabel = expense.split_mode === 'exact' ? 'Exact amounts' 
+                : expense.split_mode === 'percent' ? 'Percent split' 
+                : 'Equal split'
               
               return (
                 <div key={expense.id} className="trips-activity-item">
@@ -847,6 +927,7 @@ export default function TripsPage() {
                       <span className="trips-activity-split">
                         Split with {expense.splits.filter(s => s.user_id !== expense.paid_by).map(s => getName(s.user_id)).join(', ')}
                       </span>
+                      <span className="trips-activity-mode">{splitModeLabel}</span>
                       {!isPayer && myShare > 0 && (
                         <span className="trips-activity-owe trips-negative">You owe {formatCurrency(myShare)}</span>
                       )}
@@ -907,7 +988,7 @@ interface AddExpenseModalProps {
   friends: Friend[]
   groups: Group[]
   onClose: () => void
-  onSubmit: (description: string, amount: number, paidBy: string, splitUserIds: string[], groupId?: string) => void
+  onSubmit: (description: string, amount: number, paidBy: string, splitUserIds: string[], splitMode: SplitMode, splitValues: number[], groupId?: string) => void
 }
 
 function AddExpenseModal({ currentUserId, friends, groups, onClose, onSubmit }: AddExpenseModalProps) {
@@ -916,6 +997,9 @@ function AddExpenseModal({ currentUserId, friends, groups, onClose, onSubmit }: 
   const [paidBy, setPaidBy] = useState(currentUserId)
   const [splitWith, setSplitWith] = useState<string[]>([currentUserId])
   const [groupId, setGroupId] = useState<string>('')
+  const [splitMode, setSplitMode] = useState<SplitMode>('equal')
+  const [exactAmounts, setExactAmounts] = useState<Record<string, string>>({})
+  const [percentages, setPercentages] = useState<Record<string, string>>({})
   const [error, setError] = useState('')
 
   const allParticipants = useMemo(() => {
@@ -941,15 +1025,121 @@ function AddExpenseModal({ currentUserId, friends, groups, onClose, onSubmit }: 
     return Array.from(participants.values())
   }, [currentUserId, friends, groups, groupId])
 
+  // Initialize exact/percent values when participants change
+  useEffect(() => {
+    const newExact: Record<string, string> = {}
+    const newPercent: Record<string, string> = {}
+    splitWith.forEach(id => {
+      newExact[id] = exactAmounts[id] || ''
+      newPercent[id] = percentages[id] || ''
+    })
+    setExactAmounts(newExact)
+    setPercentages(newPercent)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [splitWith.join(',')])
+
   const handleToggleSplit = (id: string) => {
     setSplitWith(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
+  }
+
+  // Calculate totals for validation
+  const amountNum = parseFloat(amount) || 0
+  
+  const exactTotal = useMemo(() => {
+    return splitWith.reduce((sum, id) => sum + (parseFloat(exactAmounts[id]) || 0), 0)
+  }, [splitWith, exactAmounts])
+
+  const percentTotal = useMemo(() => {
+    return splitWith.reduce((sum, id) => sum + (parseFloat(percentages[id]) || 0), 0)
+  }, [splitWith, percentages])
+
+  // Preview for each mode
+  const equalShare = splitWith.length > 0 && amountNum > 0 
+    ? amountNum / splitWith.length 
+    : 0
+
+  // Compute shares for percent mode preview
+  const percentShares = useMemo(() => {
+    const shares: Record<string, number> = {}
+    if (amountNum > 0 && percentTotal > 0) {
+      const amountCents = Math.round(amountNum * 100)
+      const computedCents: number[] = []
+      const fractionalParts: number[] = []
+      const ids = splitWith
+      
+      ids.forEach(id => {
+        const pct = parseFloat(percentages[id]) || 0
+        const exactCents = (pct / 100) * amountCents
+        const floorCents = Math.floor(exactCents)
+        computedCents.push(floorCents)
+        fractionalParts.push(exactCents - floorCents)
+      })
+      
+      let remainder = amountCents - computedCents.reduce((a, b) => a + b, 0)
+      const usedIndices = new Set<number>()
+      while (remainder > 0) {
+        let maxIdx = 0
+        let maxFrac = -1
+        fractionalParts.forEach((frac, idx) => {
+          if (frac > maxFrac && !usedIndices.has(idx)) {
+            maxFrac = frac
+            maxIdx = idx
+          }
+        })
+        computedCents[maxIdx]++
+        usedIndices.add(maxIdx)
+        remainder--
+      }
+      
+      ids.forEach((id, idx) => {
+        shares[id] = computedCents[idx] / 100
+      })
+    }
+    return shares
+  }, [splitWith, percentages, amountNum, percentTotal])
+
+  // Validation
+  const exactError = splitMode === 'exact' && amountNum > 0 && Math.abs(exactTotal - amountNum) > 0.01
+    ? `Amounts must add up to ${formatCurrency(amountNum)} (currently ${formatCurrency(exactTotal)})`
+    : null
+
+  const percentError = splitMode === 'percent' && Math.abs(percentTotal - 100) > 0.01
+    ? `Percentages must add up to 100% (currently ${percentTotal.toFixed(1)}%)`
+    : null
+
+  // Auto-fill remaining for exact mode
+  const handleAutoFillExact = () => {
+    const filledUsers = splitWith.filter(id => parseFloat(exactAmounts[id]) > 0)
+    const unfilledUsers = splitWith.filter(id => !parseFloat(exactAmounts[id]))
+    if (unfilledUsers.length === 0) return
+    
+    const filledTotal = filledUsers.reduce((sum, id) => sum + (parseFloat(exactAmounts[id]) || 0), 0)
+    const remaining = amountNum - filledTotal
+    const perUser = remaining / unfilledUsers.length
+    
+    if (perUser >= 0) {
+      const newExact = { ...exactAmounts }
+      unfilledUsers.forEach(id => {
+        newExact[id] = perUser.toFixed(2)
+      })
+      setExactAmounts(newExact)
+    }
+  }
+
+  // Auto-fill equal percentages
+  const handleAutoFillPercent = () => {
+    const equalPct = 100 / splitWith.length
+    const newPercent: Record<string, string> = {}
+    splitWith.forEach(id => {
+      newPercent[id] = equalPct.toFixed(2)
+    })
+    setPercentages(newPercent)
   }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
 
-    const amountNum = parseFloat(amount)
     if (!description.trim()) {
       setError('Please enter a description')
       return
@@ -966,11 +1156,35 @@ function AddExpenseModal({ currentUserId, friends, groups, onClose, onSubmit }: 
       setError('Payer must be in the split')
       return
     }
+    
+    // Validate based on split mode
+    if (splitMode === 'exact') {
+      if (Math.abs(exactTotal - amountNum) > 0.01) {
+        setError(`Amounts must add up to ${formatCurrency(amountNum)}`)
+        return
+      }
+    }
+    if (splitMode === 'percent') {
+      if (Math.abs(percentTotal - 100) > 0.01) {
+        setError('Percentages must add up to 100%')
+        return
+      }
+    }
 
-    onSubmit(description.trim(), amountNum, paidBy, splitWith, groupId || undefined)
+    // Build split values array in participant order
+    let splitValues: number[] = []
+    if (splitMode === 'exact') {
+      splitValues = splitWith.map(id => parseFloat(exactAmounts[id]) || 0)
+    } else if (splitMode === 'percent') {
+      splitValues = splitWith.map(id => parseFloat(percentages[id]) || 0)
+    }
+
+    onSubmit(description.trim(), amountNum, paidBy, splitWith, splitMode, splitValues, groupId || undefined)
   }
 
-  const perPerson = splitWith.length > 0 && amount ? parseFloat(amount) / splitWith.length : 0
+  const getParticipantName = (id: string) => {
+    return allParticipants.find(p => p.id === id)?.name || 'Unknown'
+  }
 
   return (
     <div className="trips-modal-overlay" onClick={onClose}>
@@ -1049,14 +1263,156 @@ function AddExpenseModal({ currentUserId, friends, groups, onClose, onSubmit }: 
                 </label>
               ))}
             </div>
-            {perPerson > 0 && (
-              <div className="trips-split-preview">
-                {formatCurrency(perPerson)} per person ({splitWith.length} people)
-              </div>
-            )}
           </div>
 
-          <button type="submit" className="trips-submit-btn">Add Expense</button>
+          {/* Split Mode Selector */}
+          <div className="trips-form-group">
+            <label>Split type</label>
+            <div className="trips-split-mode-tabs">
+              <button
+                type="button"
+                className={`trips-split-mode-btn ${splitMode === 'equal' ? 'active' : ''}`}
+                onClick={() => setSplitMode('equal')}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <line x1="5" y1="9" x2="19" y2="9"/><line x1="5" y1="15" x2="19" y2="15"/>
+                </svg>
+                Equal
+              </button>
+              <button
+                type="button"
+                className={`trips-split-mode-btn ${splitMode === 'exact' ? 'active' : ''}`}
+                onClick={() => setSplitMode('exact')}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+                </svg>
+                Exact
+              </button>
+              <button
+                type="button"
+                className={`trips-split-mode-btn ${splitMode === 'percent' ? 'active' : ''}`}
+                onClick={() => setSplitMode('percent')}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/><line x1="20" y1="4" x2="4" y2="20"/>
+                </svg>
+                Percent
+              </button>
+            </div>
+          </div>
+
+          {/* Equal Split Preview */}
+          {splitMode === 'equal' && splitWith.length > 0 && amountNum > 0 && (
+            <div className="trips-split-preview">
+              <span className="trips-split-preview-icon">✓</span>
+              {formatCurrency(equalShare)} per person ({splitWith.length} people)
+            </div>
+          )}
+
+          {/* Exact Amounts Input */}
+          {splitMode === 'exact' && splitWith.length > 0 && (
+            <div className="trips-form-group">
+              <div className="trips-split-values-header">
+                <label>Exact amounts</label>
+                {amountNum > 0 && (
+                  <button 
+                    type="button" 
+                    className="trips-autofill-btn"
+                    onClick={handleAutoFillExact}
+                  >
+                    Auto-fill remaining
+                  </button>
+                )}
+              </div>
+              <div className="trips-split-values-list">
+                {splitWith.map(id => (
+                  <div key={id} className="trips-split-value-row">
+                    <span className="trips-split-value-name">{getParticipantName(id)}</span>
+                    <div className="trips-split-value-input-wrapper">
+                      <span className="trips-split-value-currency">$</span>
+                      <input
+                        type="number"
+                        placeholder="0.00"
+                        value={exactAmounts[id] || ''}
+                        onChange={e => setExactAmounts(prev => ({ ...prev, [id]: e.target.value }))}
+                        className="trips-input trips-split-value-input"
+                        step="0.01"
+                        min="0"
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {exactError ? (
+                <div className="trips-split-validation-error">{exactError}</div>
+              ) : amountNum > 0 && Math.abs(exactTotal - amountNum) <= 0.01 ? (
+                <div className="trips-split-validation-ok">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
+                  </svg>
+                  Total: {formatCurrency(exactTotal)}
+                </div>
+              ) : null}
+            </div>
+          )}
+
+          {/* Percent Split Input */}
+          {splitMode === 'percent' && splitWith.length > 0 && (
+            <div className="trips-form-group">
+              <div className="trips-split-values-header">
+                <label>Percentages</label>
+                <button 
+                  type="button" 
+                  className="trips-autofill-btn"
+                  onClick={handleAutoFillPercent}
+                >
+                  Split equally
+                </button>
+              </div>
+              <div className="trips-split-values-list">
+                {splitWith.map(id => (
+                  <div key={id} className="trips-split-value-row">
+                    <span className="trips-split-value-name">{getParticipantName(id)}</span>
+                    <div className="trips-split-value-input-wrapper trips-percent-input-wrapper">
+                      <input
+                        type="number"
+                        placeholder="0"
+                        value={percentages[id] || ''}
+                        onChange={e => setPercentages(prev => ({ ...prev, [id]: e.target.value }))}
+                        className="trips-input trips-split-value-input"
+                        step="0.01"
+                        min="0"
+                        max="100"
+                      />
+                      <span className="trips-split-value-percent">%</span>
+                    </div>
+                    {amountNum > 0 && percentShares[id] !== undefined && (
+                      <span className="trips-split-value-preview">{formatCurrency(percentShares[id])}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {percentError ? (
+                <div className="trips-split-validation-error">{percentError}</div>
+              ) : Math.abs(percentTotal - 100) <= 0.01 ? (
+                <div className="trips-split-validation-ok">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
+                  </svg>
+                  Total: {percentTotal.toFixed(1)}%
+                </div>
+              ) : null}
+            </div>
+          )}
+
+          <button 
+            type="submit" 
+            className="trips-submit-btn"
+            disabled={(splitMode === 'exact' && !!exactError) || (splitMode === 'percent' && !!percentError)}
+          >
+            Add Expense
+          </button>
         </form>
       </div>
     </div>
@@ -1548,6 +1904,14 @@ const styles = `
   .trips-group-expense-amount { font-weight: 600; color: #60a5fa; font-size: 0.875rem; white-space: nowrap; }
   .trips-group-expense-details { display: flex; gap: 8px; font-size: 0.7rem; color: #64748b; margin-bottom: 4px; }
   .trips-group-expense-payer { color: #94a3b8; }
+  .trips-group-expense-mode {
+    font-size: 0.6rem;
+    padding: 1px 5px;
+    background: rgba(99, 102, 241, 0.15);
+    color: #818cf8;
+    border-radius: 3px;
+    font-weight: 500;
+  }
   .trips-group-expense-date { color: #475569; }
   .trips-group-expense-split { font-size: 0.75rem; font-weight: 500; }
   .trips-group-members-header {
@@ -1627,7 +1991,7 @@ const styles = `
   .trips-activity-date { font-size: 0.7rem; color: #475569; }
   .trips-add-btn {
     position: fixed;
-    bottom: 24px;
+    bottom: 88px; /* Above bottom nav (72px) + spacing */
     right: 24px;
     width: 56px;
     height: 56px;
@@ -1844,6 +2208,182 @@ const styles = `
   }
   .trips-emoji-btn:hover { background: rgba(255,255,255,0.08); }
   .trips-emoji-btn.active { border-color: #3b82f6; background: rgba(59, 130, 246, 0.1); }
+
+  /* Split Mode Tabs */
+  .trips-split-mode-tabs {
+    display: flex;
+    gap: 8px;
+    background: rgba(255,255,255,0.04);
+    padding: 4px;
+    border-radius: 12px;
+  }
+  .trips-split-mode-btn {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 10px 12px;
+    background: transparent;
+    border: none;
+    border-radius: 8px;
+    color: #94a3b8;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .trips-split-mode-btn:hover {
+    color: #cbd5e1;
+    background: rgba(255,255,255,0.04);
+  }
+  .trips-split-mode-btn.active {
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    color: white;
+    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+  }
+  .trips-split-mode-btn svg {
+    opacity: 0.7;
+  }
+  .trips-split-mode-btn.active svg {
+    opacity: 1;
+  }
+
+  /* Split Preview */
+  .trips-split-preview {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    font-size: 0.8125rem;
+    color: #60a5fa;
+    background: rgba(59, 130, 246, 0.1);
+    padding: 10px 16px;
+    border-radius: 10px;
+    text-align: center;
+  }
+  .trips-split-preview-icon {
+    color: #22c55e;
+    font-weight: bold;
+  }
+
+  /* Split Values Input */
+  .trips-split-values-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+  .trips-split-values-header label {
+    margin: 0;
+  }
+  .trips-autofill-btn {
+    padding: 4px 10px;
+    background: rgba(59, 130, 246, 0.15);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: 6px;
+    color: #60a5fa;
+    font-size: 0.6875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .trips-autofill-btn:hover {
+    background: rgba(59, 130, 246, 0.25);
+    border-color: rgba(59, 130, 246, 0.5);
+  }
+  .trips-split-values-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px;
+    background: rgba(255,255,255,0.02);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 10px;
+  }
+  .trips-split-value-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .trips-split-value-name {
+    flex: 1;
+    font-size: 0.875rem;
+    color: #cbd5e1;
+    min-width: 80px;
+  }
+  .trips-split-value-input-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+    width: 100px;
+  }
+  .trips-split-value-currency {
+    position: absolute;
+    left: 10px;
+    color: #64748b;
+    font-size: 0.875rem;
+    font-weight: 500;
+  }
+  .trips-split-value-input {
+    padding: 8px 10px 8px 24px !important;
+    font-size: 0.875rem !important;
+    text-align: right;
+    width: 100%;
+  }
+  .trips-percent-input-wrapper .trips-split-value-input {
+    padding: 8px 24px 8px 10px !important;
+  }
+  .trips-split-value-percent {
+    position: absolute;
+    right: 10px;
+    color: #64748b;
+    font-size: 0.875rem;
+    font-weight: 500;
+  }
+  .trips-split-value-preview {
+    font-size: 0.75rem;
+    color: #94a3b8;
+    min-width: 60px;
+    text-align: right;
+  }
+
+  /* Split Validation */
+  .trips-split-validation-error {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    padding: 8px 12px;
+    background: rgba(248, 113, 113, 0.1);
+    border: 1px solid rgba(248, 113, 113, 0.2);
+    border-radius: 8px;
+    color: #f87171;
+    font-size: 0.75rem;
+  }
+  .trips-split-validation-ok {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    padding: 8px 12px;
+    background: rgba(34, 197, 94, 0.1);
+    border: 1px solid rgba(34, 197, 94, 0.2);
+    border-radius: 8px;
+    color: #22c55e;
+    font-size: 0.75rem;
+  }
+
+  /* Activity Mode Label */
+  .trips-activity-mode {
+    font-size: 0.65rem;
+    padding: 2px 6px;
+    background: rgba(99, 102, 241, 0.15);
+    color: #818cf8;
+    border-radius: 4px;
+    font-weight: 500;
+  }
+
   @media (max-width: 480px) {
     .trips-summary { gap: 8px; padding: 16px; }
     .trips-summary-card { padding: 12px; }
