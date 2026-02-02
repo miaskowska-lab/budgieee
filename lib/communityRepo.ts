@@ -284,13 +284,40 @@ export async function getMyCommunities(): Promise<{ data: Community[] | null; er
     return { data: null, error: new Error('Supabase not configured') }
   }
 
-  const { data, error } = await supabase.rpc('get_my_communities')
-  
-  if (error) {
-    return { data: null, error: new Error(error.message) }
+  const { data: visible, error } = await getVisibleCommunitiesWithCounts()
+  if (error || !visible) {
+    return { data: null, error: error ? new Error(error) : new Error('Failed to load communities') }
   }
-  
-  return { data: data as Community[], error: null }
+
+  const joined = visible.filter(c => c.joined_by_me)
+  if (joined.length === 0) {
+    return { data: [], error: null }
+  }
+
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) {
+    return { data: [], error: null }
+  }
+
+  const { data: memberships } = await supabase
+    .from('community_members')
+    .select('community_id, role')
+    .eq('user_id', user.id)
+    .in('community_id', joined.map(c => c.id))
+
+  const roleByCommunity = new Map((memberships || []).map(m => [m.community_id, m.role]))
+
+  const mapped: Community[] = joined.map(c => ({
+    id: c.id,
+    name: c.name,
+    emoji: c.emoji ?? '🏷️',
+    kind: c.kind,
+    image_url: c.image_url,
+    is_public: true,
+    member_count: c.member_count,
+    my_role: roleByCommunity.get(c.id) ?? 'member',
+  }))
+  return { data: mapped, error: null }
 }
 
 // ============ Posts / Feed ============
@@ -304,8 +331,25 @@ export async function getCommunityFeed(communityId: string): Promise<{ data: Pos
   if (error) {
     return { data: null, error: new Error(error.message) }
   }
-  
-  return { data: data as Post[], error: null }
+  // Map remote columns (author_display_name, author_full_name, etc.) to Post shape
+  const rows = (data ?? []) as Array<Record<string, unknown>>
+  const mapped: Post[] = rows.map(r => ({
+    post_id: r.post_id as string,
+    title: r.title as string,
+    body: r.body as string,
+    tag: (r.tag as string) ?? null,
+    tag_color: (r.tag_color as string) ?? null,
+    image_url: (r.image_url as string) ?? null,
+    created_at: r.created_at as string,
+    author_id: r.author_id as string,
+    author_name: (r.author_display_name ?? r.author_full_name ?? r.author_email ?? '') as string,
+    author_avatar_color: (r.author_avatar_color ?? '#6b7280') as string,
+    like_count: Number(r.like_count ?? 0),
+    comment_count: Number(r.comment_count ?? 0),
+    liked_by_me: Boolean(r.liked_by_me),
+    bookmarked_by_me: Boolean(r.bookmarked_by_me),
+  }))
+  return { data: mapped, error: null }
 }
 
 export async function getSavedDeals(): Promise<{ data: Post[] | null; error: Error | null }> {
@@ -313,13 +357,97 @@ export async function getSavedDeals(): Promise<{ data: Post[] | null; error: Err
     return { data: null, error: new Error('Supabase not configured') }
   }
 
-  const { data, error } = await supabase.rpc('get_saved_deals')
-  
-  if (error) {
-    return { data: null, error: new Error(error.message) }
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) {
+    return { data: [], error: null }
   }
-  
-  return { data: data as Post[], error: null }
+
+  const { data: bookmarks, error: bookErr } = await supabase
+    .from('community_post_bookmarks')
+    .select('post_id')
+    .eq('user_id', user.id)
+  if (bookErr || !bookmarks?.length) {
+    return { data: bookErr ? null : [], error: bookErr ? new Error(bookErr.message) : null }
+  }
+
+  const postIds = bookmarks.map(b => b.post_id)
+  const { data: posts, error: postsErr } = await supabase
+    .from('community_posts')
+    .select('id, community_id, author_id, title, body, tag, tag_color, image_url, created_at')
+    .in('id', postIds)
+  if (postsErr || !posts?.length) {
+    return { data: postsErr ? null : [], error: postsErr ? new Error(postsErr.message) : null }
+  }
+
+  const { data: communities } = await supabase
+    .from('communities')
+    .select('id, name, emoji')
+    .in('id', [...new Set(posts.map(p => p.community_id))])
+  const communityMap = new Map((communities || []).map(c => [c.id, c]))
+
+  const { data: likeCounts } = await supabase
+    .from('community_post_likes')
+    .select('post_id')
+    .in('post_id', postIds)
+  const likeCountByPost = new Map<string, number>()
+  ;(likeCounts || []).forEach(l => {
+    likeCountByPost.set(l.post_id, (likeCountByPost.get(l.post_id) ?? 0) + 1)
+  })
+
+  const { data: myLikes } = await supabase
+    .from('community_post_likes')
+    .select('post_id')
+    .eq('user_id', user.id)
+    .in('post_id', postIds)
+  const likedSet = new Set((myLikes || []).map(l => l.post_id))
+
+  const { data: commentCounts } = await supabase
+    .from('community_post_comments')
+    .select('post_id')
+    .in('post_id', postIds)
+  const commentCountByPost = new Map<string, number>()
+  ;(commentCounts || []).forEach(c => {
+    commentCountByPost.set(c.post_id, (commentCountByPost.get(c.post_id) ?? 0) + 1)
+  })
+
+  const authorIds = [...new Set(posts.map(p => p.author_id))]
+  const { data: profiles } = await supabase
+    .from('profiles')
+    .select('user_id, display_name, full_name, email, avatar_color')
+    .in('user_id', authorIds)
+  const profileMap = new Map(
+    (profiles || []).map(p => [
+      p.user_id,
+      { name: (p.display_name ?? p.full_name ?? p.email ?? '') as string, color: (p.avatar_color ?? '#6b7280') as string },
+    ])
+  )
+
+  const mapped: Post[] = posts
+    .map(p => {
+      const comm = communityMap.get(p.community_id)
+      return {
+        post_id: p.id,
+        title: p.title,
+        body: p.body,
+        tag: p.tag ?? null,
+        tag_color: p.tag_color ?? null,
+        image_url: p.image_url ?? null,
+        created_at: p.created_at,
+        author_id: p.author_id,
+        author_name: profileMap.get(p.author_id)?.name ?? '',
+        author_avatar_color: profileMap.get(p.author_id)?.color ?? '#6b7280',
+        like_count: likeCountByPost.get(p.id) ?? 0,
+        comment_count: commentCountByPost.get(p.id) ?? 0,
+        liked_by_me: likedSet.has(p.id),
+        bookmarked_by_me: true,
+        community_id: p.community_id,
+        community_name: comm?.name,
+        community_emoji: comm?.emoji ?? undefined,
+      }
+    })
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+
+  return { data: mapped, error: null }
 }
 
 export async function createPost(
@@ -339,7 +467,7 @@ export async function createPost(
   }
 
   const { data, error } = await supabase
-    .from('posts')
+    .from('community_posts')
     .insert({
       community_id: communityId,
       author_id: user.id,
@@ -372,7 +500,7 @@ export async function toggleLike(postId: string, isCurrentlyLiked: boolean): Pro
   if (isCurrentlyLiked) {
     // Unlike
     const { error } = await supabase
-      .from('post_likes')
+      .from('community_post_likes')
       .delete()
       .eq('post_id', postId)
       .eq('user_id', user.id)
@@ -384,7 +512,7 @@ export async function toggleLike(postId: string, isCurrentlyLiked: boolean): Pro
   } else {
     // Like
     const { error } = await supabase
-      .from('post_likes')
+      .from('community_post_likes')
       .insert({ post_id: postId, user_id: user.id })
 
     if (error) {
@@ -408,7 +536,7 @@ export async function toggleBookmark(postId: string, isCurrentlyBookmarked: bool
   if (isCurrentlyBookmarked) {
     // Remove bookmark
     const { error } = await supabase
-      .from('post_bookmarks')
+      .from('community_post_bookmarks')
       .delete()
       .eq('post_id', postId)
       .eq('user_id', user.id)
@@ -420,7 +548,7 @@ export async function toggleBookmark(postId: string, isCurrentlyBookmarked: bool
   } else {
     // Add bookmark
     const { error } = await supabase
-      .from('post_bookmarks')
+      .from('community_post_bookmarks')
       .insert({ post_id: postId, user_id: user.id })
 
     if (error) {
@@ -436,13 +564,41 @@ export async function getPostComments(postId: string): Promise<{ data: Comment[]
     return { data: null, error: new Error('Supabase not configured') }
   }
 
-  const { data, error } = await supabase.rpc('get_post_comments', { p_post_id: postId })
-  
+  const { data: rows, error } = await supabase
+    .from('community_post_comments')
+    .select('id, body, created_at, author_id')
+    .eq('post_id', postId)
+    .order('created_at', { ascending: true })
+
   if (error) {
     return { data: null, error: new Error(error.message) }
   }
-  
-  return { data: data as Comment[], error: null }
+  if (!rows || rows.length === 0) {
+    return { data: [], error: null }
+  }
+
+  const authorIds = [...new Set(rows.map(r => r.author_id))]
+  const { data: profiles } = await supabase
+    .from('profiles')
+    .select('user_id, display_name, full_name, email, avatar_color')
+    .in('user_id', authorIds)
+
+  const profileMap = new Map(
+    (profiles || []).map(p => [
+      p.user_id,
+      { name: (p.display_name ?? p.full_name ?? p.email ?? '') as string, color: (p.avatar_color ?? '#6b7280') as string },
+    ])
+  )
+
+  const mapped: Comment[] = rows.map(r => ({
+    comment_id: r.id,
+    body: r.body,
+    created_at: r.created_at,
+    author_id: r.author_id,
+    author_name: profileMap.get(r.author_id)?.name ?? '',
+    author_avatar_color: profileMap.get(r.author_id)?.color ?? '#6b7280',
+  }))
+  return { data: mapped, error: null }
 }
 
 export async function addComment(postId: string, body: string): Promise<{ data: { id: string } | null; error: Error | null }> {
@@ -456,7 +612,7 @@ export async function addComment(postId: string, body: string): Promise<{ data: 
   }
 
   const { data, error } = await supabase
-    .from('post_comments')
+    .from('community_post_comments')
     .insert({
       post_id: postId,
       author_id: user.id,
@@ -478,7 +634,7 @@ export async function getUserPoints(): Promise<{ points: number; error: Error | 
     return { points: 0, error: new Error('Supabase not configured') }
   }
 
-  const { data, error } = await supabase.rpc('get_user_points')
+  const { data, error } = await supabase.rpc('get_my_community_points')
   
   if (error) {
     return { points: 0, error: new Error(error.message) }

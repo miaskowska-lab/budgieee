@@ -112,3 +112,16 @@ Table `notification_events` and RPCs `create_notification_event`, `get_pending_n
 - [ ] `SUPABASE_MISSING_TABLES.sql` applied (communities, community_members, community_invites, posts, post_likes, post_bookmarks, post_comments, user_points, profile_settings, notification_events + all RPCs).
 - [ ] RPCs exist: `get_user_balances` (schema), `ensure_personal_friends_membership`, `ensure_default_community_memberships`, `get_my_communities`, `get_community_feed`, `get_saved_deals`, `get_post_comments`, `get_user_points`, `get_user_settings`, `update_user_settings`, `create_notification_event`, `get_pending_notifications`, `mark_notifications_delivered` (all in missing tables file).
 - [ ] `.env.local` has `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
+
+---
+
+## SQL Editor (dashboard)
+
+In the Supabase SQL Editor, use the **actual table names**. Community content tables are:
+
+- `community_posts` (not `posts`)
+- `community_post_likes` (not `post_likes`)
+- `community_post_bookmarks` (not `post_bookmarks`)
+- `community_post_comments` (not `post_comments`)
+
+Example: `SELECT * FROM community_posts;`
