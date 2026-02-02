@@ -155,7 +155,7 @@ async function testBudgetAlertEmail(): Promise<boolean> {
           <tr>
             <td align="center" style="padding: 32px 24px 8px;">
               <h1 style="margin: 0; font-size: 32px; font-weight: 700; color: #5eead4;">Budgieee</h1>
-              <p style="margin: 4px 0 0 0; font-size: 14px; color: #64748b;">Budgeting and finances, minus the boring.</p>
+              <p style="margin: 4px 0 0 0; font-size: 14px; color: #64748b;">Budgeting, minus the boring.</p>
             </td>
           </tr>
           <tr>
@@ -220,7 +220,7 @@ async function testWelcomeEmail(): Promise<boolean> {
           <tr>
             <td align="center" style="padding: 32px 24px 8px;">
               <h1 style="margin: 0; font-size: 32px; font-weight: 700; color: #5eead4;">Budgieee</h1>
-              <p style="margin: 4px 0 0 0; font-size: 14px; color: #64748b;">Budgeting and finances, minus the boring.</p>
+              <p style="margin: 4px 0 0 0; font-size: 14px; color: #64748b;">Budgeting, minus the boring.</p>
             </td>
           </tr>
           <tr>
@@ -281,7 +281,7 @@ async function testCommunityPostEmail(): Promise<boolean> {
           <tr>
             <td align="center" style="padding: 32px 24px 8px;">
               <h1 style="margin: 0; font-size: 32px; font-weight: 700; color: #5eead4;">Budgieee</h1>
-              <p style="margin: 4px 0 0 0; font-size: 14px; color: #64748b;">Budgeting and finances, minus the boring.</p>
+              <p style="margin: 4px 0 0 0; font-size: 14px; color: #64748b;">Budgeting, minus the boring.</p>
             </td>
           </tr>
           <tr>

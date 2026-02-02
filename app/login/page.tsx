@@ -210,7 +210,7 @@ export default function LoginPage() {
         {/* Logo */}
         <div className="login-logo">
           <h1>Budgieee</h1>
-          <p>Budgeting and finances, minus the boring.</p>
+          <p>Budgeting, minus the boring.</p>
         </div>
 
         {/* Auth Card */}
