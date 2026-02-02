@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { Suspense, useEffect, useState, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { supabase, isSupabaseConfigured } from '@/lib/supabaseClient'
@@ -23,7 +23,7 @@ const AVATAR_COLORS = [
   '#06b6d4', '#3b82f6',
 ]
 
-export default function Home() {
+function HomePageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { user, loading, isAuthenticated } = useSession()
@@ -558,6 +558,30 @@ export default function Home() {
         </>
       )}
     </div>
+  )
+}
+
+// Wrap in Suspense so useSearchParams() is allowed during static generation (fixes Vercel build)
+export default function Home() {
+  return (
+    <Suspense
+      fallback={
+        <div
+          className="home-page"
+          style={{
+            minHeight: '100vh',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: '#050d18',
+          }}
+        >
+          <p style={{ color: '#94a3b8' }}>Loading...</p>
+        </div>
+      }
+    >
+      <HomePageContent />
+    </Suspense>
   )
 }
 
