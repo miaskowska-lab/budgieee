@@ -6,7 +6,28 @@ import { useRouter } from 'next/navigation'
 import { useSession, isDevBypassEnabled } from '@/lib/useSession'
 import { isUserAuthenticated, getLoginRedirectPath } from '@/lib/authGuard'
 import { useNavVisibility } from '@/components/BottomNav'
-import { getVisibleCommunitiesWithCounts, joinCommunity, leaveCommunity, createInvite, isPersonalFriendsCode } from '@/lib/communityRepo'
+import {
+  getVisibleCommunitiesWithCounts,
+  joinCommunity,
+  leaveCommunity,
+  createInvite,
+  isPersonalFriendsCode,
+  getCommunityFeed,
+  getSavedDeals,
+  createPost as createPostApi,
+  toggleLike as toggleLikeApi,
+  toggleBookmark as toggleBookmarkApi,
+  getPostComments,
+  addComment as addCommentApi,
+  getUserPoints,
+  getMyPendingCommunityInvites,
+  acceptCommunityInvite,
+  declineCommunityInvite,
+  FEED_PAGE_SIZE,
+  type Post as ApiPost,
+  type Comment as ApiComment,
+  type PendingCommunityInvite,
+} from '@/lib/communityRepo'
 import { isSupabaseConfigured } from '@/lib/supabaseClient'
 
 // ============================================
@@ -150,8 +171,16 @@ export default function CommunityPage() {
   const [communitiesLoading, setCommunitiesLoading] = useState(isSupabaseConfigured)
   const [communitiesError, setCommunitiesError] = useState<string | null>(null)
   const [posts, setPosts] = useState<Post[]>(INITIAL_POSTS)
+  const [postsLoading, setPostsLoading] = useState(false)
+  const [postsLoadingMore, setPostsLoadingMore] = useState(false)
+  const [postsHasMore, setPostsHasMore] = useState(false)
+  const [postsOffset, setPostsOffset] = useState(0)
   const [comments, setComments] = useState<Record<string, Comment[]>>(INITIAL_COMMENTS)
+  const [commentsFetchedAt, setCommentsFetchedAt] = useState<Record<string, number>>({}) // timestamp per post
+  const [commentsLoading, setCommentsLoading] = useState(false)
   const [friends, setFriends] = useState<Friend[]>(INITIAL_FRIENDS)
+  const [pendingCommunityInvites, setPendingCommunityInvites] = useState<PendingCommunityInvite[]>([])
+  const [supabasePoints, setSupabasePoints] = useState<number>(0)
   
   // UI state
   const [showNewPostModal, setShowNewPostModal] = useState(false)
@@ -213,11 +242,166 @@ export default function CommunityPage() {
     }
   }, [])
 
+  // Load community feed from Supabase (initial load, resets pagination)
+  const loadFeed = useCallback(async (communityId: string) => {
+    if (!isSupabaseConfigured) return
+    setPostsLoading(true)
+    setPostsOffset(0)
+    try {
+      const { data, error } = await getCommunityFeed(communityId, FEED_PAGE_SIZE, 0)
+      if (error) {
+        console.error('loadFeed:', error)
+        showToast('Failed to load posts', 'error')
+      } else if (data) {
+        // Map ApiPost to local Post type with community_id
+        const mappedPosts: Post[] = data.posts.map(p => ({
+          ...p,
+          community_id: communityId,
+        }))
+        setPosts(mappedPosts)
+        setPostsHasMore(data.hasMore)
+        setPostsOffset(FEED_PAGE_SIZE)
+      }
+    } catch (err) {
+      console.error('loadFeed exception:', err)
+    } finally {
+      setPostsLoading(false)
+    }
+  }, [showToast])
+
+  // Load more posts (pagination)
+  const loadMorePosts = useCallback(async () => {
+    if (!isSupabaseConfigured || !selectedCommunityId || postsLoadingMore || !postsHasMore) return
+    setPostsLoadingMore(true)
+    try {
+      const { data, error } = await getCommunityFeed(selectedCommunityId, FEED_PAGE_SIZE, postsOffset)
+      if (error) {
+        console.error('loadMorePosts:', error)
+        showToast('Failed to load more posts', 'error')
+      } else if (data) {
+        const mappedPosts: Post[] = data.posts.map(p => ({
+          ...p,
+          community_id: selectedCommunityId,
+        }))
+        setPosts(prev => [...prev, ...mappedPosts])
+        setPostsHasMore(data.hasMore)
+        setPostsOffset(prev => prev + FEED_PAGE_SIZE)
+      }
+    } catch (err) {
+      console.error('loadMorePosts exception:', err)
+    } finally {
+      setPostsLoadingMore(false)
+    }
+  }, [selectedCommunityId, postsOffset, postsLoadingMore, postsHasMore, showToast])
+
+  // Load saved deals from Supabase
+  const loadSavedDeals = useCallback(async () => {
+    if (!isSupabaseConfigured) return
+    setPostsLoading(true)
+    try {
+      const { data, error } = await getSavedDeals()
+      if (error) {
+        console.error('loadSavedDeals:', error)
+        showToast('Failed to load saved deals', 'error')
+      } else if (data) {
+        // Map ApiPost to local Post type
+        const mappedPosts: Post[] = data.map(p => ({
+          ...p,
+          community_id: p.community_id || '',
+        }))
+        setPosts(mappedPosts)
+      }
+    } catch (err) {
+      console.error('loadSavedDeals exception:', err)
+    } finally {
+      setPostsLoading(false)
+    }
+  }, [showToast])
+
+  // Load user points from Supabase
+  const loadPoints = useCallback(async () => {
+    if (!isSupabaseConfigured) return
+    try {
+      const { points, error } = await getUserPoints()
+      if (!error) {
+        setSupabasePoints(points)
+      }
+    } catch (err) {
+      console.error('loadPoints exception:', err)
+    }
+  }, [])
+
+  // Load pending community invites
+  const loadPendingInvites = useCallback(async () => {
+    if (!isSupabaseConfigured) return
+    try {
+      const { data, error } = await getMyPendingCommunityInvites()
+      if (!error && data) {
+        setPendingCommunityInvites(data)
+      }
+    } catch (err) {
+      console.error('loadPendingInvites exception:', err)
+    }
+  }, [])
+
+  // Load comments for a post from Supabase (with caching)
+  // showLoading: false for background refresh (stale-while-revalidate)
+  const loadComments = useCallback(async (postId: string, showLoading: boolean = true) => {
+    if (!isSupabaseConfigured) return
+    if (showLoading) setCommentsLoading(true)
+    try {
+      const { data, error } = await getPostComments(postId)
+      if (!error && data) {
+        const mapped: Comment[] = data.map(c => ({
+          comment_id: c.comment_id,
+          body: c.body,
+          created_at: c.created_at,
+          author_id: c.author_id,
+          author_name: c.author_name,
+          author_avatar_color: c.author_avatar_color,
+        }))
+        setComments(prev => ({ ...prev, [postId]: mapped }))
+        setCommentsFetchedAt(prev => ({ ...prev, [postId]: Date.now() }))
+      }
+    } catch (err) {
+      console.error('loadComments exception:', err)
+    } finally {
+      if (showLoading) setCommentsLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     if (isSupabaseConfigured && isAuthenticated && !authLoading) {
       loadCommunities()
+      loadPoints()
+      loadPendingInvites()
     }
-  }, [isAuthenticated, authLoading, loadCommunities])
+  }, [isAuthenticated, authLoading, loadCommunities, loadPoints, loadPendingInvites])
+
+  // Load comments when comments modal opens (with caching)
+  // Cache is valid for 30 seconds; stale cache shows immediately while refreshing in background
+  const COMMENTS_CACHE_TTL = 30 * 1000 // 30 seconds
+  useEffect(() => {
+    if (!showCommentsModal || !isSupabaseConfigured) return
+    
+    const postId = showCommentsModal
+    const cachedAt = commentsFetchedAt[postId]
+    const hasCached = cachedAt !== undefined // We fetched before (even if 0 comments)
+    const isFresh = cachedAt && (Date.now() - cachedAt) < COMMENTS_CACHE_TTL
+    
+    if (hasCached && isFresh) {
+      // Fresh cache: use it, no fetch needed
+      return
+    } else if (hasCached) {
+      // Stale cache: show cached, refresh in background (no loading spinner)
+      loadComments(postId, false)
+    } else {
+      // No cache: show loading and fetch
+      loadComments(postId, true)
+    }
+    // Only re-run when modal opens/closes (postId changes), not when cache updates
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showCommentsModal])
 
   // Get selected community
   const selectedCommunity = communities.find(c => c.id === selectedCommunityId)
@@ -237,14 +421,17 @@ export default function CommunityPage() {
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
   }, [posts])
 
-  // Calculate points (2 per like on your posts)
+  // Calculate points (use Supabase when configured, else local calculation)
   const userPoints = useMemo(() => {
+    if (isSupabaseConfigured) {
+      return supabasePoints
+    }
     const myPosts = posts.filter(p => p.author_id === MOCK_USER.id)
     return myPosts.reduce((sum, p) => sum + p.like_count * POINTS_PER_LIKE, 0)
-  }, [posts])
+  }, [posts, supabasePoints])
 
   // ============ Event Handlers ============
-  const handleSelectCommunity = (communityId: string) => {
+  const handleSelectCommunity = useCallback((communityId: string) => {
     const community = communities.find(c => c.id === communityId)
     setSelectedCommunityId(communityId)
     setShowActionMenu(false)
@@ -253,8 +440,12 @@ export default function CommunityPage() {
       setViewMode('join-gate')
     } else {
       setViewMode('feed')
+      // Load feed from Supabase
+      if (isSupabaseConfigured) {
+        loadFeed(communityId)
+      }
     }
-  }
+  }, [communities, loadFeed])
 
   const handleBackToPortal = () => {
     setViewMode('portal')
@@ -262,9 +453,13 @@ export default function CommunityPage() {
     setShowActionMenu(false)
   }
 
-  const handleViewSaved = () => {
+  const handleViewSaved = useCallback(() => {
     setViewMode('saved')
-  }
+    // Load saved deals from Supabase
+    if (isSupabaseConfigured) {
+      loadSavedDeals()
+    }
+  }, [loadSavedDeals])
 
   // Get friends who are members of Personal Friends
   const personalFriendsMembers = useMemo(() => {
@@ -354,6 +549,30 @@ export default function CommunityPage() {
     console.log('getVisibleCommunitiesWithCounts:', result)
   }, [])
 
+  // Handle accepting a community invite
+  const handleAcceptCommunityInvite = useCallback(async (inviteId: string) => {
+    const { error } = await acceptCommunityInvite(inviteId)
+    if (error) {
+      showToast(error, 'error')
+      return
+    }
+    showToast('Invite accepted!')
+    // Refresh data
+    loadCommunities()
+    loadPendingInvites()
+  }, [showToast, loadCommunities, loadPendingInvites])
+
+  // Handle declining a community invite
+  const handleDeclineCommunityInvite = useCallback(async (inviteId: string) => {
+    const { error } = await declineCommunityInvite(inviteId)
+    if (error) {
+      showToast(error, 'error')
+      return
+    }
+    showToast('Invite declined')
+    loadPendingInvites()
+  }, [showToast, loadPendingInvites])
+
   const handleCopyInviteLink = async () => {
     const inviteLink = `${window.location.origin}/invite?group=personal&from=${MOCK_USER.id}`
     try {
@@ -364,9 +583,31 @@ export default function CommunityPage() {
     }
   }
 
-  const handleNewPost = (title: string, body: string, tag?: string, imageUrl?: string) => {
+  const handleNewPost = useCallback(async (title: string, body: string, tag?: string, imageUrl?: string) => {
     if (!selectedCommunityId) return
     
+    if (isSupabaseConfigured) {
+      // Create post in Supabase
+      const { data, error } = await createPostApi(
+        selectedCommunityId,
+        title,
+        body,
+        tag,
+        tag ? '#3b82f6' : undefined
+      )
+      if (error) {
+        showToast(error.message, 'error')
+        return
+      }
+      // Reload feed to show new post
+      await loadFeed(selectedCommunityId)
+      setShowNewPostModal(false)
+      setShowActionMenu(false)
+      showToast('Deal shared!')
+      return
+    }
+    
+    // Fallback for mock mode
     const community = communities.find(c => c.id === selectedCommunityId)
     const newPost: Post = {
       post_id: generateId(),
@@ -392,9 +633,54 @@ export default function CommunityPage() {
     setShowNewPostModal(false)
     setShowActionMenu(false)
     showToast('Deal shared!')
-  }
+  }, [selectedCommunityId, communities, loadFeed, showToast])
 
-  const handleLike = (postId: string) => {
+  const handleLike = useCallback(async (postId: string) => {
+    const post = posts.find(p => p.post_id === postId)
+    if (!post) return
+    
+    if (isSupabaseConfigured) {
+      // Optimistic update
+      setPosts(prev => prev.map(p => {
+        if (p.post_id === postId) {
+          const newLiked = !p.liked_by_me
+          return {
+            ...p,
+            liked_by_me: newLiked,
+            like_count: newLiked ? p.like_count + 1 : p.like_count - 1,
+          }
+        }
+        return p
+      }))
+      
+      // Call Supabase
+      const { liked, error } = await toggleLikeApi(postId, post.liked_by_me)
+      if (error) {
+        // Revert on error
+        setPosts(prev => prev.map(p => {
+          if (p.post_id === postId) {
+            return {
+              ...p,
+              liked_by_me: post.liked_by_me,
+              like_count: post.like_count,
+            }
+          }
+          return p
+        }))
+        showToast(error.message, 'error')
+      } else {
+        // Confirm backend state matches (sync if different)
+        setPosts(prev => prev.map(p => {
+          if (p.post_id === postId && p.liked_by_me !== liked) {
+            return { ...p, liked_by_me: liked }
+          }
+          return p
+        }))
+      }
+      return
+    }
+    
+    // Mock mode
     setPosts(prev => prev.map(p => {
       if (p.post_id === postId) {
         const newLiked = !p.liked_by_me
@@ -406,9 +692,52 @@ export default function CommunityPage() {
       }
       return p
     }))
-  }
+  }, [posts, showToast])
 
-  const handleBookmark = (postId: string) => {
+  const handleBookmark = useCallback(async (postId: string) => {
+    const post = posts.find(p => p.post_id === postId)
+    if (!post) return
+    
+    if (isSupabaseConfigured) {
+      // Optimistic update
+      const wasBookmarked = post.bookmarked_by_me
+      setPosts(prev => prev.map(p => {
+        if (p.post_id === postId) {
+          return { ...p, bookmarked_by_me: !wasBookmarked }
+        }
+        return p
+      }))
+      
+      if (!wasBookmarked) {
+        showToast('Saved!')
+      } else {
+        showToast('Removed from saved')
+      }
+      
+      // Call Supabase
+      const { bookmarked, error } = await toggleBookmarkApi(postId, wasBookmarked)
+      if (error) {
+        // Revert on error
+        setPosts(prev => prev.map(p => {
+          if (p.post_id === postId) {
+            return { ...p, bookmarked_by_me: wasBookmarked }
+          }
+          return p
+        }))
+        showToast(error.message, 'error')
+      } else {
+        // Confirm backend state matches (sync if different)
+        setPosts(prev => prev.map(p => {
+          if (p.post_id === postId && p.bookmarked_by_me !== bookmarked) {
+            return { ...p, bookmarked_by_me: bookmarked }
+          }
+          return p
+        }))
+      }
+      return
+    }
+    
+    // Mock mode
     setPosts(prev => prev.map(p => {
       if (p.post_id === postId) {
         const newBookmarked = !p.bookmarked_by_me
@@ -421,9 +750,29 @@ export default function CommunityPage() {
       }
       return p
     }))
-  }
+  }, [posts, showToast])
 
-  const handleAddComment = (postId: string, body: string) => {
+  const handleAddComment = useCallback(async (postId: string, body: string) => {
+    if (isSupabaseConfigured) {
+      const { data, error } = await addCommentApi(postId, body)
+      if (error) {
+        showToast(error.message, 'error')
+        return
+      }
+      // Reload comments (background, no spinner since we just added)
+      await loadComments(postId, false)
+      // Update post comment count
+      setPosts(prev => prev.map(p => {
+        if (p.post_id === postId) {
+          return { ...p, comment_count: p.comment_count + 1 }
+        }
+        return p
+      }))
+      showToast('Comment added!')
+      return
+    }
+    
+    // Mock mode
     const newComment: Comment = {
       comment_id: generateId(),
       body,
@@ -437,6 +786,7 @@ export default function CommunityPage() {
       ...prev,
       [postId]: [...(prev[postId] || []), newComment],
     }))
+    setCommentsFetchedAt(prev => ({ ...prev, [postId]: Date.now() }))
     
     setPosts(prev => prev.map(p => {
       if (p.post_id === postId) {
@@ -446,7 +796,7 @@ export default function CommunityPage() {
     }))
     
     showToast('Comment added!')
-  }
+  }, [loadComments, showToast])
 
   const handleShare = async (postId: string) => {
     const post = posts.find(p => p.post_id === postId)
@@ -552,13 +902,15 @@ export default function CommunityPage() {
             </div>
           </header>
 
-          {/* Dev Mode Banner */}
-          <div className="community-dev-banner">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-            </svg>
-            <span>Dev Mode - Data stored locally</span>
-          </div>
+          {/* Dev Mode Banner (only shown when Supabase is NOT configured) */}
+          {!isSupabaseConfigured && (
+            <div className="community-dev-banner">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+              </svg>
+              <span>Dev Mode - Data stored locally</span>
+            </div>
+          )}
 
           {/* How Points Work */}
           <div className="community-points-explainer">
@@ -567,6 +919,40 @@ export default function CommunityPage() {
             </svg>
             <span>Earn {POINTS_PER_LIKE} points for each like on your posts!</span>
           </div>
+
+          {/* Pending Community Invites */}
+          {pendingCommunityInvites.length > 0 && (
+            <div className="community-invites-section">
+              <h2 className="community-section-title">Pending Invites</h2>
+              <div className="community-invites-list">
+                {pendingCommunityInvites.map(invite => (
+                  <div key={invite.id} className="community-invite-card">
+                    <div className="community-invite-info">
+                      <span className="community-invite-emoji">{invite.community_emoji || '👥'}</span>
+                      <div className="community-invite-details">
+                        <span className="community-invite-name">{invite.community_name || 'Community'}</span>
+                        <span className="community-invite-from">from {invite.inviter_name || 'someone'}</span>
+                      </div>
+                    </div>
+                    <div className="community-invite-actions">
+                      <button 
+                        className="community-invite-accept"
+                        onClick={() => handleAcceptCommunityInvite(invite.id)}
+                      >
+                        Accept
+                      </button>
+                      <button 
+                        className="community-invite-decline"
+                        onClick={() => handleDeclineCommunityInvite(invite.id)}
+                      >
+                        Decline
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Communities Section */}
           <div className="community-section">
@@ -816,6 +1202,24 @@ export default function CommunityPage() {
                   onShare={() => handleShare(post.post_id)}
                 />
               ))
+            )}
+            
+            {/* Load More Button */}
+            {isSupabaseConfigured && postsHasMore && !postsLoading && communityPosts.length > 0 && (
+              <button 
+                className="community-load-more-btn"
+                onClick={loadMorePosts}
+                disabled={postsLoadingMore}
+              >
+                {postsLoadingMore ? (
+                  <>
+                    <span className="community-load-more-spinner" />
+                    Loading...
+                  </>
+                ) : (
+                  'Load More'
+                )}
+              </button>
             )}
           </div>
 
@@ -1724,6 +2128,80 @@ const styles = `
     letter-spacing: 0.05em;
     margin: 0 0 16px 0;
   }
+  /* Pending Community Invites */
+  .community-invites-section {
+    padding: 0 16px;
+    margin-bottom: 24px;
+  }
+  .community-invites-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .community-invite-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 14px;
+    background: rgba(59, 130, 246, 0.08);
+    border: 1px solid rgba(59, 130, 246, 0.2);
+    border-radius: 12px;
+  }
+  .community-invite-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .community-invite-emoji {
+    font-size: 1.5rem;
+  }
+  .community-invite-details {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .community-invite-name {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #e2e8f0;
+  }
+  .community-invite-from {
+    font-size: 0.75rem;
+    color: #94a3b8;
+  }
+  .community-invite-actions {
+    display: flex;
+    gap: 8px;
+  }
+  .community-invite-accept {
+    padding: 6px 14px;
+    background: #3b82f6;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  .community-invite-accept:hover {
+    background: #2563eb;
+  }
+  .community-invite-decline {
+    padding: 6px 14px;
+    background: transparent;
+    color: #94a3b8;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 8px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .community-invite-decline:hover {
+    background: rgba(255,255,255,0.05);
+    color: #e2e8f0;
+  }
   .community-groups-grid { display: flex; flex-direction: column; gap: 10px; }
   .community-group-card {
     display: flex;
@@ -2065,6 +2543,44 @@ const styles = `
   .community-post-action:hover { background: rgba(255,255,255,0.06); color: #94a3b8; }
   .community-post-action.liked { color: #f87171; }
   .community-post-action.bookmarked { color: #fbbf24; }
+
+  /* ============ LOAD MORE BUTTON ============ */
+  .community-load-more-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    padding: 14px 20px;
+    margin-top: 16px;
+    background: rgba(59, 130, 246, 0.1);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: 12px;
+    color: #3b82f6;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .community-load-more-btn:hover:not(:disabled) {
+    background: rgba(59, 130, 246, 0.2);
+    border-color: rgba(59, 130, 246, 0.5);
+  }
+  .community-load-more-btn:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+  }
+  .community-load-more-spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(59, 130, 246, 0.3);
+    border-top-color: #3b82f6;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
 
   /* ============ FLOATING ACTION BUTTON ============ */
   .community-fab-container {

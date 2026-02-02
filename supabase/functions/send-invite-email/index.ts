@@ -6,7 +6,8 @@ serve(async (req) => {
 
     const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
     const SITE_URL = Deno.env.get("SITE_URL") || "http://localhost:3000";
-    // Production from address. Override with FROM_EMAIL secret if needed (e.g. for Resend test mode use onboarding@resend.dev).
+    // From address. Use a domain verified in Resend (SPF + DKIM) to avoid spam.
+    // Override with FROM_EMAIL secret if you verify a subdomain (e.g. no-reply@send.budgieee.com).
     const FROM_EMAIL = Deno.env.get("FROM_EMAIL") || "Budgieee <no-reply@budgieee.com>";
 
     if (!RESEND_API_KEY) {

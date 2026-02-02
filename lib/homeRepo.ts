@@ -1,5 +1,7 @@
 import { supabase, isSupabaseConfigured } from './supabaseClient'
 import { getCurrentMonth } from './budgetRepo'
+import { getUserPoints, getSavedDeals } from './communityRepo'
+import { getMyBalances } from './tripsRepo'
 
 // ============================================
 // HOME PAGE - Data Repository
@@ -76,15 +78,41 @@ export async function getHomeDashboard(): Promise<{ data: HomeDashboard | null; 
     
     const totalSpent = expenses?.reduce((sum, exp) => sum + Number(exp.amount), 0) || 0
     
-    // Community stats (not connected yet - return 0)
-    // TODO: Connect when community feature uses Supabase
-    const communityPoints = 0
-    const dealsPosted = 0
-    const savedDeals = 0
+    // Community stats
+    let communityPoints = 0
+    let dealsPosted = 0
+    let savedDeals = 0
     
-    // Trips net balance (not connected yet - return 0)
-    // TODO: Connect when trips feature uses Supabase
-    const tripsNet = 0
+    try {
+      // Get community points from RPC
+      const { points } = await getUserPoints()
+      communityPoints = points || 0
+      
+      // Get saved deals count
+      const { data: savedDealsData } = await getSavedDeals()
+      savedDeals = savedDealsData?.length || 0
+      
+      // Get deals posted count (posts authored by user)
+      const { data: postsData } = await supabase
+        .from('community_posts')
+        .select('id')
+        .eq('author_id', user.id)
+      dealsPosted = postsData?.length || 0
+    } catch (err) {
+      console.error('Error fetching community stats:', err)
+    }
+    
+    // Trips net balance
+    let tripsNet = 0
+    try {
+      const { data: balances } = await getMyBalances()
+      if (balances) {
+        // Sum up all balances: positive = others owe me, negative = I owe others
+        tripsNet = balances.reduce((sum, b) => sum + b.balance, 0)
+      }
+    } catch (err) {
+      console.error('Error fetching trips balance:', err)
+    }
     
     return {
       data: {

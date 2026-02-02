@@ -231,6 +231,162 @@ export async function createInvite(communityId: string, email: string): Promise<
   return { error: null }
 }
 
+// ============ Community Invites ============
+export interface PendingCommunityInvite {
+  id: string
+  community_id: string
+  invited_by: string
+  invited_email: string
+  status: 'pending' | 'accepted' | 'declined'
+  created_at: string
+  community_name?: string
+  community_emoji?: string
+  inviter_name?: string
+}
+
+/** Get pending community invites for the current user */
+export async function getMyPendingCommunityInvites(): Promise<{ data: PendingCommunityInvite[] | null; error: string | null }> {
+  if (!isSupabaseConfigured) {
+    return { data: null, error: 'Supabase not configured' }
+  }
+
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) {
+    return { data: null, error: 'Not authenticated' }
+  }
+
+  // Get user's email from profile
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('email')
+    .eq('user_id', user.id)
+    .single()
+
+  if (!profile) {
+    return { data: [], error: null }
+  }
+
+  // Get pending invites for this email
+  const { data: invites, error } = await supabase
+    .from('community_invites')
+    .select('id, community_id, invited_by, invited_email, status, created_at')
+    .eq('invited_email', profile.email.toLowerCase())
+    .eq('status', 'pending')
+    .order('created_at', { ascending: false })
+
+  if (error) {
+    console.error('getMyPendingCommunityInvites:', error)
+    return { data: null, error: error.message }
+  }
+
+  if (!invites || invites.length === 0) {
+    return { data: [], error: null }
+  }
+
+  // Get community details
+  const communityIds = invites.map(i => i.community_id)
+  const { data: communities } = await supabase
+    .from('communities')
+    .select('id, name, emoji')
+    .in('id', communityIds)
+
+  const communityMap: Record<string, { name: string; emoji: string }> = {}
+  ;(communities || []).forEach(c => {
+    communityMap[c.id] = { name: c.name, emoji: c.emoji }
+  })
+
+  // Get inviter profiles
+  const inviterIds = [...new Set(invites.map(i => i.invited_by))]
+  const { data: inviterProfiles } = await supabase
+    .from('profiles')
+    .select('user_id, full_name, email')
+    .in('user_id', inviterIds)
+
+  const inviterMap: Record<string, string> = {}
+  ;(inviterProfiles || []).forEach(p => {
+    inviterMap[p.user_id] = p.full_name || p.email
+  })
+
+  const result: PendingCommunityInvite[] = invites.map(i => ({
+    ...i,
+    status: i.status as 'pending' | 'accepted' | 'declined',
+    community_name: communityMap[i.community_id]?.name,
+    community_emoji: communityMap[i.community_id]?.emoji,
+    inviter_name: inviterMap[i.invited_by]
+  }))
+
+  return { data: result, error: null }
+}
+
+/** Accept a community invite */
+export async function acceptCommunityInvite(inviteId: string): Promise<{ error: string | null }> {
+  if (!isSupabaseConfigured) {
+    return { error: 'Supabase not configured' }
+  }
+
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) {
+    return { error: 'Not authenticated' }
+  }
+
+  // Get the invite
+  const { data: invite, error: fetchError } = await supabase
+    .from('community_invites')
+    .select('id, community_id, status')
+    .eq('id', inviteId)
+    .single()
+
+  if (fetchError || !invite) {
+    return { error: 'Invite not found' }
+  }
+
+  if (invite.status !== 'pending') {
+    return { error: 'Invite already responded to' }
+  }
+
+  // Update invite status
+  const { error: updateError } = await supabase
+    .from('community_invites')
+    .update({ status: 'accepted' })
+    .eq('id', inviteId)
+
+  if (updateError) {
+    console.error('acceptCommunityInvite update:', updateError)
+    return { error: updateError.message }
+  }
+
+  // Add user to community members
+  const { error: memberError } = await supabase
+    .from('community_members')
+    .insert({ community_id: invite.community_id, user_id: user.id, role: 'member' })
+
+  if (memberError && !memberError.message.includes('duplicate')) {
+    console.error('acceptCommunityInvite add member:', memberError)
+    return { error: memberError.message }
+  }
+
+  return { error: null }
+}
+
+/** Decline a community invite */
+export async function declineCommunityInvite(inviteId: string): Promise<{ error: string | null }> {
+  if (!isSupabaseConfigured) {
+    return { error: 'Supabase not configured' }
+  }
+
+  const { error } = await supabase
+    .from('community_invites')
+    .update({ status: 'declined' })
+    .eq('id', inviteId)
+
+  if (error) {
+    console.error('declineCommunityInvite:', error)
+    return { error: error.message }
+  }
+
+  return { error: null }
+}
+
 export interface Post {
   post_id: string
   title: string
@@ -321,19 +477,40 @@ export async function getMyCommunities(): Promise<{ data: Community[] | null; er
 }
 
 // ============ Posts / Feed ============
-export async function getCommunityFeed(communityId: string): Promise<{ data: Post[] | null; error: Error | null }> {
+// Default page size for feed pagination
+export const FEED_PAGE_SIZE = 20
+
+export interface FeedPage {
+  posts: Post[]
+  hasMore: boolean
+}
+
+export async function getCommunityFeed(
+  communityId: string,
+  limit: number = FEED_PAGE_SIZE,
+  offset: number = 0
+): Promise<{ data: FeedPage | null; error: Error | null }> {
   if (!isSupabaseConfigured) {
     return { data: null, error: new Error('Supabase not configured') }
   }
 
-  const { data, error } = await supabase.rpc('get_community_feed', { p_community_id: communityId })
+  // Request one extra to detect if there are more posts
+  const { data, error } = await supabase.rpc('get_community_feed', {
+    p_community_id: communityId,
+    p_limit: limit + 1,
+    p_offset: offset,
+  })
   
   if (error) {
     return { data: null, error: new Error(error.message) }
   }
+  
   // Map remote columns (author_display_name, author_full_name, etc.) to Post shape
   const rows = (data ?? []) as Array<Record<string, unknown>>
-  const mapped: Post[] = rows.map(r => ({
+  const hasMore = rows.length > limit
+  const trimmedRows = hasMore ? rows.slice(0, limit) : rows
+  
+  const posts: Post[] = trimmedRows.map(r => ({
     post_id: r.post_id as string,
     title: r.title as string,
     body: r.body as string,
@@ -349,7 +526,8 @@ export async function getCommunityFeed(communityId: string): Promise<{ data: Pos
     liked_by_me: Boolean(r.liked_by_me),
     bookmarked_by_me: Boolean(r.bookmarked_by_me),
   }))
-  return { data: mapped, error: null }
+  
+  return { data: { posts, hasMore }, error: null }
 }
 
 export async function getSavedDeals(): Promise<{ data: Post[] | null; error: Error | null }> {
