@@ -207,28 +207,27 @@ export async function createInvite(communityId: string, email: string): Promise<
     return { error: error.message }
   }
 
-  // Send invite email via Resend API
+  // Send invite email via API route (server-side)
   try {
     const { data: community } = await supabase.from('communities').select('name').eq('id', communityId).single()
     const { data: inviterProfile } = await supabase.from('profiles').select('full_name, email').eq('user_id', user.id).single()
     const inviterName = inviterProfile?.full_name || inviterProfile?.email?.split('@')[0] || 'Someone'
     const communityName = community?.name || 'a community'
 
-    // Use the Resend-powered email function
-    const { sendGroupInviteEmail } = await import('./notifications')
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://budgieee.com'
+    // Call API route to send email (works from client)
+    const appUrl = typeof window !== 'undefined' ? window.location.origin : 'https://budgieee.com'
     const inviteLink = `${appUrl}/community?invite=${communityId}`
     
-    const result = await sendGroupInviteEmail(
-      email.trim().toLowerCase(),
-      inviterName,
-      communityName,
-      inviteLink
-    )
-    
-    if (!result.success) {
-      console.error('send-invite-email (community):', result.error)
-    }
+    fetch('/api/notifications/invite', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: email.trim().toLowerCase(),
+        inviterName,
+        groupName: communityName,
+        inviteLink
+      })
+    }).catch(err => console.error('send-invite-email (community):', err))
   } catch (err) {
     console.error('send-invite-email (community) exception:', err)
   }
