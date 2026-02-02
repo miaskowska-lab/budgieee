@@ -43,12 +43,27 @@ export function useSession(): SessionState {
       return
     }
 
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session)
-      setUser(session?.user ?? null)
+    // Get initial session — stop waiting after 4s so the app doesn't hang
+    let done = false
+    const finish = () => {
+      if (done) return
+      done = true
       setLoading(false)
-    })
+    }
+    const t = setTimeout(finish, 4000)
+
+    supabase.auth.getSession()
+      .then(({ data: { session } }) => {
+        if (done) return
+        clearTimeout(t)
+        setSession(session)
+        setUser(session?.user ?? null)
+        finish()
+      })
+      .catch(() => {
+        clearTimeout(t)
+        finish()
+      })
 
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
@@ -58,7 +73,11 @@ export function useSession(): SessionState {
       }
     )
 
-    return () => subscription.unsubscribe()
+    return () => {
+      done = true
+      clearTimeout(t)
+      subscription.unsubscribe()
+    }
   }, [])
 
   const isAuthenticated = isDevBypassEnabled || !!user

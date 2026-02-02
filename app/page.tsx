@@ -204,7 +204,8 @@ export default function Home() {
           {isLoggedIn && stats.communityPoints > 0 && (
             <div className="home-points-badge">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                <circle cx="12" cy="12" r="9"/>
+                <circle cx="12" cy="12" r="5" strokeWidth="1.5"/>
               </svg>
               {stats.communityPoints}
             </div>
@@ -220,32 +221,33 @@ export default function Home() {
         </div>
       </header>
 
-      {/* ============ WELCOME SECTION ============ */}
-      <div className="home-welcome">
-        <h2 className="home-welcome-title">
-          {isLoggedIn ? (devBypass ? 'Dev Mode' : 'Welcome back') : 'Welcome'}
-        </h2>
-        <p className="home-welcome-text">
-          {isLoggedIn 
-            ? 'Manage your finances, split expenses, and discover deals.'
-            : 'Sign in to access all features.'
-          }
-        </p>
-      </div>
-
-      {/* ============ AUTH BOX (Not logged in) ============ */}
-      {!isLoggedIn && (
-        <div className="home-auth-section">
-          <Link href="/login" className="home-login-link">
-            <button type="button" className="home-login-btn">
-              Sign in to continue
-            </button>
-          </Link>
+      {/* ============ MAIN CONTENT (centered vertically above bottom nav) ============ */}
+      <main className="home-main">
+        <div className="home-welcome">
+          <h2 className="home-welcome-title">
+            {isLoggedIn ? (devBypass ? 'Dev Mode' : 'Welcome back') : 'Welcome'}
+          </h2>
+          <p className="home-welcome-text">
+            {isLoggedIn 
+              ? 'Manage your finances, split expenses, and discover deals.'
+              : 'Sign in to access all features.'
+            }
+          </p>
         </div>
-      )}
 
-      {/* ============ FEATURE CARDS ============ */}
-      {isLoggedIn && (
+        {/* ============ AUTH BOX (Not logged in) ============ */}
+        {!isLoggedIn && (
+          <div className="home-auth-section">
+            <Link href="/login" className="home-login-link">
+              <button type="button" className="home-login-btn">
+                Sign in to continue
+              </button>
+            </Link>
+          </div>
+        )}
+
+        {/* ============ FEATURE CARDS ============ */}
+        {isLoggedIn && (
         <div className="home-cards">
           {/* Life Budget */}
           <button className="home-card" onClick={() => router.push('/budget')}>
@@ -306,7 +308,8 @@ export default function Home() {
             </div>
           </button>
         </div>
-      )}
+        )}
+      </main>
 
       {/* ============ USER PANEL OVERLAY ============ */}
       {showUserPanel && (
@@ -344,25 +347,6 @@ export default function Home() {
                 {/* Quick Stats */}
                 <div className="home-panel-stats-header">
                   <span>Your Stats</span>
-                  <button 
-                    className="home-panel-refresh"
-                    onClick={() => user && loadStats(user.id)}
-                    disabled={statsLoading}
-                    title="Refresh stats"
-                  >
-                    <svg 
-                      width="16" 
-                      height="16" 
-                      viewBox="0 0 24 24" 
-                      fill="none" 
-                      stroke="currentColor" 
-                      strokeWidth="2"
-                      className={statsLoading ? 'spinning' : ''}
-                    >
-                      <path d="M23 4v6h-6M1 20v-6h6"/>
-                      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
-                    </svg>
-                  </button>
                 </div>
                 {statsError && (
                   <div className="home-panel-stats-error">
@@ -386,7 +370,11 @@ export default function Home() {
                     <span className="home-panel-stat-label">Deals posted</span>
                   </div>
                   <div className="home-panel-stat">
-                    <span className="home-panel-stat-value gold">
+                    <span className="home-panel-stat-value gold home-panel-stat-community">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <circle cx="12" cy="12" r="9"/>
+                        <circle cx="12" cy="12" r="5" strokeWidth="1.5"/>
+                      </svg>
                       {statsLoading ? '—' : stats.communityPoints}
                     </span>
                     <span className="home-panel-stat-label">Community pts</span>
@@ -567,10 +555,22 @@ export default function Home() {
 const styles = `
   .home-page {
     min-height: 100vh;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
     background: linear-gradient(180deg, #050d18 0%, #0a1628 15%, #142136 35%, #1a2d4a 50%, #142136 65%, #0a1628 85%, #050d18 100%);
     color: #e2e8f0;
     padding-bottom: 100px;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+
+  /* Main content: fills space between header and bottom nav, centers welcome + cards vertically */
+  .home-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 24px 0 32px;
   }
 
   /* ============ LOADING ============ */
@@ -755,6 +755,7 @@ const styles = `
     padding: 0 20px;
     max-width: 500px;
     margin: 0 auto;
+    width: 100%;
   }
   .home-card {
     display: flex;
@@ -926,24 +927,6 @@ const styles = `
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
-  .home-panel-refresh {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    background: rgba(255,255,255,0.06);
-    border: none;
-    border-radius: 8px;
-    color: #64748b;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-  .home-panel-refresh:hover { background: rgba(255,255,255,0.1); color: #94a3b8; }
-  .home-panel-refresh:disabled { opacity: 0.5; cursor: not-allowed; }
-  .home-panel-refresh svg.spinning {
-    animation: home-spin 1s linear infinite;
-  }
   .home-panel-stats-error {
     display: flex;
     align-items: center;
@@ -981,6 +964,15 @@ const styles = `
   .home-panel-stat-value.positive { color: #34d399; }
   .home-panel-stat-value.negative { color: #f87171; }
   .home-panel-stat-value.gold { color: #fbbf24; }
+  .home-panel-stat-value.home-panel-stat-community {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .home-panel-stat-value.home-panel-stat-community svg {
+    color: #fbbf24;
+    flex-shrink: 0;
+  }
   .home-panel-stat-label {
     font-size: 0.75rem;
     color: #64748b;
@@ -1195,6 +1187,14 @@ const styles = `
   .home-about-value { color: #e2e8f0; }
 
   /* ============ RESPONSIVE ============ */
+  @media (min-width: 768px) {
+    .home-cards { max-width: 580px; padding: 0 24px; }
+    .home-card { padding: 18px 24px; }
+  }
+  @media (min-width: 1024px) {
+    .home-cards { max-width: 680px; padding: 0 32px; }
+    .home-card { padding: 20px 28px; }
+  }
   @media (max-width: 380px) {
     .home-header { padding: 16px 20px 12px; }
     .home-logo { font-size: 1.5rem; }

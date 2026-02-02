@@ -135,8 +135,14 @@ export default function CommunityPage() {
   }, [authLoading, isAuthenticated, router])
   
   // View state
-  const [viewMode, setViewMode] = useState<'portal' | 'feed' | 'saved'>('portal')
+  const [viewMode, setViewMode] = useState<'portal' | 'feed' | 'saved' | 'join-gate'>('portal')
   const [selectedCommunityId, setSelectedCommunityId] = useState<string | null>(null)
+
+  // Only @uni.minerva.edu can join city/university communities
+  const canJoinMinervaCommunities = useMemo(() => {
+    const email = authUser?.email?.toLowerCase() ?? ''
+    return email.endsWith('@uni.minerva.edu')
+  }, [authUser?.email])
   
   // Data state: communities from Supabase when configured, else mock
   // Start with empty array when Supabase is configured to avoid flash of mock data
@@ -239,9 +245,15 @@ export default function CommunityPage() {
 
   // ============ Event Handlers ============
   const handleSelectCommunity = (communityId: string) => {
+    const community = communities.find(c => c.id === communityId)
     setSelectedCommunityId(communityId)
-    setViewMode('feed')
     setShowActionMenu(false)
+    // Content hidden until they join: show join-gate for city/university communities when not a member
+    if (community && community.kind !== 'private' && !community.joined_by_me) {
+      setViewMode('join-gate')
+    } else {
+      setViewMode('feed')
+    }
   }
 
   const handleBackToPortal = () => {
@@ -526,7 +538,8 @@ export default function CommunityPage() {
               </button>
               <div className="community-points-badge">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                  <circle cx="12" cy="12" r="9"/>
+                  <circle cx="12" cy="12" r="5" strokeWidth="1.5"/>
                 </svg>
                 {userPoints} pts
               </div>
@@ -677,8 +690,65 @@ export default function CommunityPage() {
         </div>
       )}
 
+      {/* ============ JOIN GATE (content hidden until Join) ============ */}
+      {viewMode === 'join-gate' && selectedCommunity && (
+        <div className="community-join-gate">
+          <header className="community-feed-header">
+            <button className="community-back-btn" onClick={handleBackToPortal}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M19 12H5M12 19l-7-7 7-7"/>
+              </svg>
+            </button>
+            <div className="community-feed-title-area">
+              <span className="community-feed-emoji">{selectedCommunity.emoji}</span>
+              <div>
+                <h1 className="community-feed-title">{selectedCommunity.name}</h1>
+                <p className="community-feed-members">
+                  {selectedCommunity.member_count} {selectedCommunity.kind === 'private' ? 'friends' : 'members'}
+                </p>
+              </div>
+            </div>
+          </header>
+          <div className="community-join-gate-content">
+            <div className="community-join-gate-card">
+              {canJoinMinervaCommunities ? (
+                <>
+                  <p className="community-join-gate-message">Join this community to see deals and posts.</p>
+                  <button
+                    type="button"
+                    className="community-join-gate-btn"
+                    onClick={async () => {
+                      const { error } = await joinCommunity(selectedCommunity.id)
+                      if (error) {
+                        showToast(error, 'error')
+                        return
+                      }
+                      showToast('Joined!')
+                      await loadCommunities()
+                      setViewMode('feed')
+                    }}
+                  >
+                    Join
+                  </button>
+                </>
+              ) : (
+                <>
+                  <h2 className="community-join-gate-title">Only Minerva students can join</h2>
+                  <p className="community-join-gate-message">
+                    This community is for students with a <strong>@uni.minerva.edu</strong> email.
+                  </p>
+                  <p className="community-join-gate-hint">
+                    If you have a Minerva email, log out and sign back in with it to join.
+                  </p>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ============ FEED VIEW ============ */}
-      {viewMode === 'feed' && selectedCommunity && (
+      {viewMode === 'feed' && selectedCommunity && selectedCommunity.joined_by_me && (
         <div className="community-feed">
           {/* Feed Header */}
           <header className="community-feed-header">
@@ -713,7 +783,8 @@ export default function CommunityPage() {
               )}
               <div className="community-points-badge small">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                  <circle cx="12" cy="12" r="9"/>
+                  <circle cx="12" cy="12" r="5" strokeWidth="1.5"/>
                 </svg>
                 {userPoints}
               </div>
@@ -902,7 +973,8 @@ function PostCard({ post, showCommunity, currentUserId, onLike, onBookmark, onCo
       {isOwnPost && pointsEarned > 0 && (
         <div className="community-post-points">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+            <circle cx="12" cy="12" r="9"/>
+            <circle cx="12" cy="12" r="5" strokeWidth="1.5"/>
           </svg>
           +{pointsEarned} pts earned
         </div>
@@ -1764,6 +1836,72 @@ const styles = `
   }
   .community-refresh-btn:hover {
     background: rgba(59, 130, 246, 0.3);
+  }
+
+  /* ============ JOIN GATE (centered card) ============ */
+  .community-join-gate {
+    display: flex;
+    flex-direction: column;
+    min-height: calc(100vh - 80px);
+  }
+  .community-join-gate-content {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px 20px;
+  }
+  .community-join-gate-card {
+    max-width: 360px;
+    width: 100%;
+    padding: 28px 24px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 16px;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+  }
+  .community-join-gate-title {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: #f1f5f9;
+    margin: 0;
+    line-height: 1.3;
+  }
+  .community-join-gate-message {
+    font-size: 0.9375rem;
+    color: #cbd5e1;
+    margin: 0;
+    line-height: 1.45;
+  }
+  .community-join-gate-message strong {
+    color: #e2e8f0;
+    font-weight: 600;
+  }
+  .community-join-gate-hint {
+    font-size: 0.875rem;
+    color: #94a3b8;
+    margin: 0;
+    line-height: 1.4;
+  }
+  .community-join-gate-btn {
+    margin-top: 4px;
+    padding: 12px 24px;
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    border: none;
+    border-radius: 12px;
+    color: white;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .community-join-gate-btn:hover {
+    filter: brightness(1.1);
+    transform: translateY(-1px);
   }
 
   /* ============ FEED VIEW ============ */

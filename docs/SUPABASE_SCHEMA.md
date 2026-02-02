@@ -19,6 +19,7 @@ The SQL is split into blocks due to RLS cross-table dependencies:
 | E1 | Expenses |
 | E2 | Expense Splits |
 | E3 | Invites + Balance Function |
+| F  | Community Members (Minerva join restriction) |
 
 ---
 
@@ -408,6 +409,34 @@ begin
   join profiles p on p.user_id = coalesce(owed.user_id, owe.paid_by);
 end;
 $$ language plpgsql security definer;
+```
+
+---
+
+## 🧱 BLOCK F — Community Members (Minerva join restriction)
+
+Run this **after** `communities` and `community_members` tables exist. Restricts joining **city/university** communities to users whose email ends with `@uni.minerva.edu`. **Private** communities (e.g. Personal Friends, invite flows) remain joinable by RPC/invite.
+
+```sql
+-- Drop existing INSERT policy on community_members if it exists (name may vary in your project)
+drop policy if exists "users can join communities" on community_members;
+drop policy if exists "members insert" on community_members;
+drop policy if exists "community_members insert" on community_members;
+
+-- Allow insert: own user_id; and either community is private, or (city/university and Minerva email)
+create policy "community_members insert minerva or private"
+on community_members for insert
+to authenticated
+with check (
+  user_id = auth.uid()
+  and (
+    (select c.kind from public.communities c where c.id = community_id) = 'private'
+    or (
+      (select c.kind from public.communities c where c.id = community_id) in ('city', 'university')
+      and (select lower(p.email) from public.profiles p where p.user_id = auth.uid()) like '%@uni.minerva.edu'
+    )
+  )
+);
 ```
 
 ---

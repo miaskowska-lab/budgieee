@@ -133,10 +133,30 @@ export async function getVisibleCommunitiesWithCounts(): Promise<{
   return { data, error: null }
 }
 
+/** Only @uni.minerva.edu can join city/university communities; private (e.g. Personal Friends) is allowed via invite/RPC. */
 export async function joinCommunity(communityId: string): Promise<{ error: string | null }> {
   if (!isSupabaseConfigured) return { error: 'Supabase not configured' }
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not authenticated' }
+
+  const { data: community, error: commError } = await supabase
+    .from('communities')
+    .select('kind')
+    .eq('id', communityId)
+    .single()
+
+  if (commError || !community) {
+    console.error('joinCommunity community fetch:', commError)
+    return { error: commError?.message ?? 'Community not found' }
+  }
+
+  const kind = community.kind as 'city' | 'university' | 'private'
+  if (kind === 'city' || kind === 'university') {
+    const email = (user.email ?? '').toLowerCase()
+    if (!email.endsWith('@uni.minerva.edu')) {
+      return { error: 'Only Minerva students (@uni.minerva.edu) can join this community.' }
+    }
+  }
 
   const { error } = await supabase
     .from('community_members')
