@@ -206,7 +206,10 @@ function HomePageContent() {
       {/* ============ HEADER ============ */}
       <header className="home-header">
         <div className="home-header-left">
-          <h1 className="home-logo">Budgieee</h1>
+          <div className="home-logo-wrap">
+            <img src="/logo.svg" alt="" className="home-logo-img" />
+            <h1 className="home-logo">Budgieee</h1>
+          </div>
           <p className="home-tagline">Budgeting, minus the boring.</p>
         </div>
         <div className="home-header-right">
@@ -636,6 +639,19 @@ const styles = `
     padding-top: calc(20px + env(safe-area-inset-top, 0px));
   }
   .home-header-left { display: flex; flex-direction: column; gap: 2px; }
+  .home-logo-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .home-logo-img {
+    height: 28px;
+    width: auto;
+    object-fit: contain;
+    flex-shrink: 0;
+    background: transparent;
+    mix-blend-mode: lighten;
+  }
   .home-logo {
     font-size: 1.75rem;
     font-weight: 700;
@@ -1233,6 +1249,7 @@ const styles = `
   @media (max-width: 380px) {
     .home-header { padding: 16px 20px 12px; }
     .home-logo { font-size: 1.5rem; }
+    .home-logo-img { height: 24px; }
     .home-cards { padding: 0 16px; }
     .home-card { padding: 14px 16px; }
     .home-card-icon { width: 48px; height: 48px; }

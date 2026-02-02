@@ -162,6 +162,7 @@ function generateEmailHtml(title: string, body: string, ctaText: string, ctaUrl:
           <!-- Logo -->
           <tr>
             <td align="center" style="padding: 32px 24px 8px;">
+              <img src="${BASE_URL}/logo.svg" alt="Budgieee" width="120" height="36" style="height: 36px; width: auto; max-width: 120px; display: block; margin: 0 auto 8px;" />
               <h1 style="margin: 0; font-size: 32px; font-weight: 700; color: #5eead4; letter-spacing: -0.5px;">
                 Budgieee
               </h1>
@@ -247,6 +248,7 @@ function generateDigestHtml(sections: { title: string; items: string[] }[]): str
           <!-- Logo -->
           <tr>
             <td align="center" style="padding: 32px 24px 8px;">
+              <img src="${BASE_URL}/logo.svg" alt="Budgieee" width="120" height="36" style="height: 36px; width: auto; max-width: 120px; display: block; margin: 0 auto 8px;" />
               <h1 style="margin: 0; font-size: 32px; font-weight: 700; color: #5eead4; letter-spacing: -0.5px;">
                 Budgieee
               </h1>

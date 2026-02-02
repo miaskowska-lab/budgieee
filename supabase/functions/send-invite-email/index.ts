@@ -41,6 +41,7 @@ serve(async (req) => {
         subject: `${inviter_name} invited you to ${group_name} on Budgieee`,
         html: `
           <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px;">
+            <img src="${SITE_URL}/logo.svg" alt="Budgieee" width="120" height="36" style="height: 36px; width: auto; max-width: 120px; display: block; margin: 0 auto 16px;" />
             <h2 style="color: #1e293b;">You've been invited to ${group_name}</h2>
             <p style="color: #475569; font-size: 16px; line-height: 1.5;">
               <strong>${inviter_name}</strong> invited you to join a group on Budgieee.

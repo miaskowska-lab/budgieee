@@ -209,7 +209,10 @@ export default function LoginPage() {
       <div className="login-container">
         {/* Logo */}
         <div className="login-logo">
-          <h1>Budgieee</h1>
+          <div className="login-logo-wrap">
+            <img src="/logo.svg" alt="" className="login-logo-img" />
+            <h1>Budgieee</h1>
+          </div>
           <p>Budgeting, minus the boring.</p>
         </div>
 
@@ -429,10 +432,27 @@ const styles = `
     margin-bottom: 32px;
   }
 
+  .login-logo-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+
+  .login-logo-img {
+    height: 36px;
+    width: auto;
+    object-fit: contain;
+    flex-shrink: 0;
+    background: transparent;
+    mix-blend-mode: lighten;
+  }
+
   .login-logo h1 {
     font-size: 2.5rem;
     font-weight: 700;
-    margin: 0 0 8px 0;
+    margin: 0;
     background: linear-gradient(135deg, #60a5fa, #34d399);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
