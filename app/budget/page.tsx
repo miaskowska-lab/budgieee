@@ -787,9 +787,11 @@ export default function BudgetPage() {
               <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/>
             </svg>
           </button>
-          <div className="budget-header-avatar">
-            {getInitials(user?.email || 'U')}
-          </div>
+          <Link href="/?panel=account" className="budget-header-avatar-link" aria-label="Profile">
+            <div className="budget-header-avatar">
+              {getInitials(user?.email || 'U')}
+            </div>
+          </Link>
         </div>
       </header>
 
@@ -2041,6 +2043,15 @@ const styles = `
     display: flex;
     align-items: center;
     gap: 10px;
+  }
+  .budget-header-avatar-link {
+    display: flex;
+    text-decoration: none;
+    cursor: pointer;
+    border-radius: 50%;
+  }
+  .budget-header-avatar-link:hover .budget-header-avatar {
+    filter: brightness(1.15);
   }
   .budget-header-avatar {
     width: 40px; height: 40px; border-radius: 50%;

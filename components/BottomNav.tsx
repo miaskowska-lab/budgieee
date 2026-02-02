@@ -66,11 +66,13 @@ export default function BottomNav() {
           className={`app-nav-item ${isActive('/budget') ? 'active' : ''}`} 
           onClick={() => router.push('/budget')}
         >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <rect x="2" y="3" width="20" height="14" rx="2"/>
-            <line x1="8" y1="21" x2="16" y2="21"/>
-            <line x1="12" y1="17" x2="12" y2="21"/>
-          </svg>
+          <span className="app-nav-icon-wrap">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="2" y="3" width="20" height="14" rx="2"/>
+              <line x1="8" y1="21" x2="16" y2="21"/>
+              <line x1="12" y1="17" x2="12" y2="21"/>
+            </svg>
+          </span>
           <span>Budget</span>
         </button>
 
@@ -78,12 +80,12 @@ export default function BottomNav() {
           className={`app-nav-item app-nav-center ${isActive('/') ? 'active' : ''}`} 
           onClick={() => router.push('/')}
         >
-          <div className="app-nav-center-icon">
+          <span className="app-nav-icon-wrap app-nav-center-icon">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
               <polyline points="9 22 9 12 15 12 15 22"/>
             </svg>
-          </div>
+          </span>
           <span>Home</span>
         </button>
 
@@ -91,12 +93,14 @@ export default function BottomNav() {
           className={`app-nav-item ${isActive('/trips') ? 'active' : ''}`} 
           onClick={() => router.push('/trips')}
         >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
-            <circle cx="9" cy="7" r="4"/>
-            <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
-            <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
-          </svg>
+          <span className="app-nav-icon-wrap">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+              <circle cx="9" cy="7" r="4"/>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+              <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+          </span>
           <span>Trips</span>
         </button>
 
@@ -104,9 +108,11 @@ export default function BottomNav() {
           className={`app-nav-item ${isActive('/community') ? 'active' : ''}`} 
           onClick={() => router.push('/community')}
         >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
-          </svg>
+          <span className="app-nav-icon-wrap">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+            </svg>
+          </span>
           <span>Deals</span>
         </button>
       </nav>
@@ -182,6 +188,24 @@ const styles = `
     color: #34d399; 
   }
   
+  /* Icon wrap: same size for all, circle + glow only when this tab is active */
+  .app-nav-icon-wrap {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s, box-shadow 0.2s;
+  }
+  
+  .app-nav-item.active .app-nav-icon-wrap {
+    background: linear-gradient(135deg, #10b981, #059669);
+    color: white;
+    box-shadow: 0 4px 16px rgba(16, 185, 129, 0.4);
+    border: 3px solid rgba(5, 13, 24, 0.9);
+  }
+  
   .app-nav-center {
     position: relative;
     margin-top: -16px;
@@ -190,17 +214,23 @@ const styles = `
   .app-nav-center-icon {
     width: 48px;
     height: 48px;
-    background: linear-gradient(135deg, #10b981, #059669);
     border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
-    color: white;
-    box-shadow: 0 4px 16px rgba(16, 185, 129, 0.4);
-    border: 3px solid rgba(5, 13, 24, 0.9);
+    transition: background 0.2s, box-shadow 0.2s;
   }
   
-  .app-nav-item.active.app-nav-center .app-nav-center-icon {
+  /* Center (Home): same size when active; no ring when inactive */
+  .app-nav-center .app-nav-icon-wrap {
+    width: 48px;
+    height: 48px;
+  }
+  
+  .app-nav-item.active.app-nav-center .app-nav-icon-wrap {
+    background: linear-gradient(135deg, #10b981, #059669);
+    color: white;
     box-shadow: 0 4px 20px rgba(16, 185, 129, 0.5);
+    border: 3px solid rgba(5, 13, 24, 0.9);
   }
 `

@@ -909,12 +909,14 @@ export default function CommunityPage() {
                 </svg>
                 {userPoints} pts
               </div>
-              <div 
-                className="community-avatar" 
-                style={{ background: currentUser.avatar_color }}
-              >
-                {getInitials(currentUser.name)}
-              </div>
+              <Link href="/?panel=account" className="community-avatar-link" aria-label="Profile">
+                <div 
+                  className="community-avatar" 
+                  style={{ background: currentUser.avatar_color }}
+                >
+                  {getInitials(currentUser.name)}
+                </div>
+              </Link>
             </div>
           </header>
 
@@ -2079,6 +2081,15 @@ const styles = `
   }
   .community-points-badge.small { padding: 4px 10px; font-size: 0.75rem; }
   .community-points-badge svg { color: #fbbf24; }
+  .community-avatar-link {
+    display: flex;
+    text-decoration: none;
+    cursor: pointer;
+    border-radius: 50%;
+  }
+  .community-avatar-link:hover .community-avatar {
+    filter: brightness(1.15);
+  }
   .community-avatar {
     width: 36px;
     height: 36px;

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { supabase, isSupabaseConfigured } from '@/lib/supabaseClient'
 import { useSession, isDevBypassEnabled } from '@/lib/useSession'
@@ -25,9 +25,19 @@ const AVATAR_COLORS = [
 
 export default function Home() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { user, loading, isAuthenticated } = useSession()
   const [showUserPanel, setShowUserPanel] = useState(false)
   const [panelView, setPanelView] = useState<'account' | 'settings'>('account')
+
+  // Open profile/settings panel when navigating from another page (e.g. ?panel=account or ?panel=settings)
+  useEffect(() => {
+    const panel = searchParams.get('panel')
+    if (panel === 'account' || panel === 'settings') {
+      setShowUserPanel(true)
+      setPanelView(panel === 'settings' ? 'settings' : 'account')
+    }
+  }, [searchParams])
   const [signingOut, setSigningOut] = useState(false)
   
   // Hide global nav when user panel is open

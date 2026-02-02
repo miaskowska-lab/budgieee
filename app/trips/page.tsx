@@ -815,9 +815,11 @@ export default function TripsPage() {
             <p className="trips-header-subtitle">{user.full_name}</p>
           </div>
         </div>
-        <div className="trips-header-avatar" style={{ background: getAvatarColor(user.user_id) }}>
-          {getInitials(user.full_name)}
-        </div>
+        <Link href="/?panel=account" className="trips-header-avatar-link" aria-label="Profile">
+          <div className="trips-header-avatar" style={{ background: getAvatarColor(user.user_id) }}>
+            {getInitials(user.full_name)}
+          </div>
+        </Link>
       </header>
 
       {/* Summary Cards */}
@@ -2045,6 +2047,15 @@ const styles = `
   .trips-back-btn:hover { background: rgba(255,255,255,0.1); color: #e2e8f0; }
   .trips-header-title { font-size: 1.25rem; font-weight: 600; color: #f1f5f9; margin: 0; }
   .trips-header-subtitle { font-size: 0.75rem; color: #64748b; margin: 0; }
+  .trips-header-avatar-link {
+    display: flex;
+    text-decoration: none;
+    cursor: pointer;
+    border-radius: 50%;
+  }
+  .trips-header-avatar-link:hover .trips-header-avatar {
+    filter: brightness(1.15);
+  }
   .trips-header-avatar {
     width: 36px;
     height: 36px;
