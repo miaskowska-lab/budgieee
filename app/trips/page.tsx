@@ -812,7 +812,7 @@ export default function TripsPage() {
           </Link>
           <div>
             <h1 className="trips-header-title">Trips & Splits</h1>
-            <p className="trips-header-subtitle">{user.full_name} • Demo Mode</p>
+            <p className="trips-header-subtitle">{user.full_name}</p>
           </div>
         </div>
         <div className="trips-header-avatar" style={{ background: getAvatarColor(user.user_id) }}>
