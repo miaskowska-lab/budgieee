@@ -143,7 +143,7 @@ export async function sendEmail(payload: EmailPayload, dryRun = false): Promise<
 // EMAIL TEMPLATES
 // ============================================
 
-const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://budgieee.com'
 
 function generateEmailHtml(title: string, body: string, ctaText: string, ctaUrl: string): string {
   return `

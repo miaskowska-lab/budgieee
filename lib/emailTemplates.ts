@@ -3,7 +3,7 @@
 // All notification emails with consistent branding
 // ============================================
 
-const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://budgieee.com'
 
 // Shared email wrapper with consistent branding
 function emailWrapper(content: string, footerText: string = "You're receiving this because you have notifications enabled."): string {

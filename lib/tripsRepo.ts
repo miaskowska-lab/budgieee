@@ -292,7 +292,7 @@ export async function inviteToGroup(groupId: string, email: string): Promise<{ e
     
     // Use the Resend-powered email function
     const { sendGroupInviteEmail } = await import('./notifications')
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://budgieee.com'
     const inviteLink = `${appUrl}/trips?invite=${groupId}`
     
     const result = await sendGroupInviteEmail(

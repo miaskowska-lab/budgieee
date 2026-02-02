@@ -216,7 +216,7 @@ export async function createInvite(communityId: string, email: string): Promise<
 
     // Use the Resend-powered email function
     const { sendGroupInviteEmail } = await import('./notifications')
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://budgieee.com'
     const inviteLink = `${appUrl}/community?invite=${communityId}`
     
     const result = await sendGroupInviteEmail(
