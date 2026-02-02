@@ -501,7 +501,7 @@ export async function processDigestNotifications(dryRun = false): Promise<{
     
     const allDeliveredIds: string[] = []
     
-    for (const [userId, userNotifs] of byUser.entries()) {
+    for (const [userId, userNotifs] of Array.from(byUser.entries())) {
       result.usersProcessed++
       
       const userEmail = userNotifs[0].user_email
