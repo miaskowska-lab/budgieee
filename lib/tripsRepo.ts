@@ -294,6 +294,8 @@ export async function inviteToGroup(groupId: string, email: string): Promise<{ e
     const appUrl = typeof window !== 'undefined' ? window.location.origin : 'https://budgieee.com'
     const inviteLink = `${appUrl}/trips?invite=${groupId}`
     
+    console.log('Sending invite email:', { email: email.toLowerCase(), inviterName, groupName, inviteLink })
+    
     fetch('/api/notifications/invite', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -303,7 +305,16 @@ export async function inviteToGroup(groupId: string, email: string): Promise<{ e
         groupName,
         inviteLink
       })
-    }).catch(err => console.error('send-invite-email (trips):', err))
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.success) {
+          console.log('Invite email sent successfully')
+        } else {
+          console.error('Invite email failed:', data.error)
+        }
+      })
+      .catch(err => console.error('send-invite-email (trips):', err))
   } catch (err) {
     console.error('send-invite-email (trips) exception:', err)
   }
@@ -371,7 +382,7 @@ export async function getMyPendingInvites(): Promise<{ data: PendingInvite[] | n
 
   const inviterMap: Record<string, string> = {}
   ;(inviterProfiles || []).forEach(p => {
-    inviterMap[p.user_id] = p.full_name || p.email
+    inviterMap[p.user_id] = p.full_name || p.email?.split('@')[0] || 'A friend'
   })
 
   const result: PendingInvite[] = invites.map(i => ({
@@ -379,7 +390,7 @@ export async function getMyPendingInvites(): Promise<{ data: PendingInvite[] | n
     status: i.status as 'pending' | 'accepted' | 'declined',
     group_name: i.group_id ? groupMap[i.group_id]?.name : undefined,
     group_emoji: i.group_id ? groupMap[i.group_id]?.emoji : undefined,
-    inviter_name: inviterMap[i.invited_by]
+    inviter_name: inviterMap[i.invited_by] || 'A friend'
   }))
 
   return { data: result, error: null }

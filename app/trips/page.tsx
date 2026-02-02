@@ -123,9 +123,15 @@ function formatDate(dateStr: string | Date): string {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
-function getInitials(name: string | null): string {
-  if (!name) return '?'
-  return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
+function getInitials(name: string | null, email?: string | null): string {
+  if (name) {
+    return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
+  }
+  if (email) {
+    // Use first 2 chars of email username as fallback
+    return email.split('@')[0].slice(0, 2).toUpperCase()
+  }
+  return '?'
 }
 
 function getAvatarColor(id: string): string {
@@ -1097,10 +1103,10 @@ export default function TripsPage() {
                                   className="trips-group-member-avatar" 
                                   style={{ background: getAvatarColor(member.user_id) }}
                                 >
-                                  {getInitials(member.profile.full_name)}
+                                  {getInitials(member.profile.full_name, member.profile.email)}
                                 </div>
                                 <span className="trips-group-member-name">
-                                  {member.user_id === user.user_id ? 'You' : member.profile.full_name || member.profile.email.split('@')[0]}
+                                  {member.user_id === user.user_id ? 'You' : member.profile.full_name || member.profile.email?.split('@')[0] || 'Unknown'}
                                 </span>
                                 {member.role === 'owner' && <span className="trips-group-member-badge">Owner</span>}
                               </div>

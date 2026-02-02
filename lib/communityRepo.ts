@@ -218,6 +218,8 @@ export async function createInvite(communityId: string, email: string): Promise<
     const appUrl = typeof window !== 'undefined' ? window.location.origin : 'https://budgieee.com'
     const inviteLink = `${appUrl}/community?invite=${communityId}`
     
+    console.log('Sending community invite email:', { email: email.trim().toLowerCase(), inviterName, groupName: communityName, inviteLink })
+    
     fetch('/api/notifications/invite', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -227,7 +229,16 @@ export async function createInvite(communityId: string, email: string): Promise<
         groupName: communityName,
         inviteLink
       })
-    }).catch(err => console.error('send-invite-email (community):', err))
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.success) {
+          console.log('Community invite email sent successfully')
+        } else {
+          console.error('Community invite email failed:', data.error)
+        }
+      })
+      .catch(err => console.error('send-invite-email (community):', err))
   } catch (err) {
     console.error('send-invite-email (community) exception:', err)
   }
