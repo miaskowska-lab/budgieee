@@ -130,20 +130,29 @@ const EMOJI_OPTIONS = ['🛒', '🚗', '💡', '📱', '📦', '🏠', '🎮', '
 const CustomTooltip = ({ active, payload }: any) => {
   if (active && payload && payload.length) {
     const data = payload[0].payload
-    if (data.isUnspent) {
+    if (data.isUnallocated && data.id === 'unallocated') {
       return (
         <div className="custom-tooltip">
-          <div className="custom-tooltip-name">Unspent Budget</div>
-          <div className="custom-tooltip-value">{formatCurrency(data.value)} remaining</div>
+          <div className="custom-tooltip-name">Unallocated</div>
+          <div className="custom-tooltip-value">{formatCurrency(data.value)} not yet in categories</div>
+        </div>
+      )
+    }
+    if (data.id === 'empty') {
+      return (
+        <div className="custom-tooltip">
+          <div className="custom-tooltip-name">{data.name}</div>
+          <div className="custom-tooltip-value">Build your budget to see allocation</div>
         </div>
       )
     }
     return (
       <div className="custom-tooltip">
         <div className="custom-tooltip-name">{data.emoji} {data.name}</div>
-        <div className="custom-tooltip-value">
-          Spent: {formatCurrency(data.spent)} / {formatCurrency(data.budget)}
-        </div>
+        <div className="custom-tooltip-value">Budgeted: {formatCurrency(data.budget)}</div>
+        {data.spent !== undefined && (
+          <div className="custom-tooltip-sub">Spent: {formatCurrency(data.spent)}</div>
+        )}
       </div>
     )
   }
@@ -308,9 +317,16 @@ export default function BudgetPage() {
     [categories]
   )
 
+  // Pie chart = budget allocation by category (from "Build your budget"); expenses tracked below
+  const allocatedTotal = useMemo(() =>
+    categories.reduce((sum, cat) => sum + cat.limit_amount, 0),
+    [categories]
+  )
+
   const pieData = useMemo(() => {
+    // One slice per category: value = budgeted amount (limit_amount)
     const categoryData = categories
-      .filter(cat => cat.spent > 0)
+      .filter(cat => cat.limit_amount > 0)
       .map(cat => ({
         id: cat.id,
         name: cat.name,
@@ -318,40 +334,41 @@ export default function BudgetPage() {
         color: cat.color || '#64748b',
         budget: cat.limit_amount,
         spent: cat.spent,
-        value: cat.spent,
-        isUnspent: false,
+        value: cat.limit_amount,
+        isUnallocated: false,
       }))
-    
-    const unspent = totalBudget - totalSpent
-    if (unspent > 0) {
+
+    // Unallocated: total budget not yet assigned to any category
+    const unallocated = totalBudget - allocatedTotal
+    if (unallocated > 0) {
       categoryData.push({
-        id: 'unspent',
-        name: 'Unspent',
+        id: 'unallocated',
+        name: 'Unallocated',
         emoji: '',
         color: 'rgba(100, 116, 139, 0.4)',
-        budget: unspent,
+        budget: unallocated,
         spent: 0,
-        value: unspent,
-        isUnspent: true,
+        value: unallocated,
+        isUnallocated: true,
       })
     }
-    
-    // If no data at all (no budget set, no spending), show a placeholder ring
+
+    // No categories / no budget: placeholder
     if (categoryData.length === 0) {
       categoryData.push({
         id: 'empty',
-        name: 'No Budget Set',
+        name: totalBudget > 0 ? 'Add categories' : 'Set budget',
         emoji: '',
         color: 'rgba(100, 116, 139, 0.2)',
-        budget: 0,
+        budget: totalBudget,
         spent: 0,
-        value: 1, // Need a value > 0 to render
-        isUnspent: true,
+        value: totalBudget > 0 ? totalBudget : 1,
+        isUnallocated: true,
       })
     }
-    
+
     return categoryData
-  }, [categories, totalBudget, totalSpent])
+  }, [categories, totalBudget, allocatedTotal])
 
   // Weeks in selected month
   const weeks = useMemo(() => {
@@ -938,9 +955,9 @@ export default function BudgetPage() {
               </PieChart>
             </ResponsiveContainer>
             <div className="budget-pie-center">
-              <div className="budget-pie-center-label">Total Spent</div>
-              <div className="budget-pie-center-amount">{formatCurrency(totalSpent)}</div>
-              <div className="budget-pie-center-sub">of {formatCurrency(totalBudget)}</div>
+              <div className="budget-pie-center-label">Total Budget</div>
+              <div className="budget-pie-center-amount">{formatCurrency(totalBudget)}</div>
+              <div className="budget-pie-center-sub">by category below</div>
             </div>
           </div>
         )}
@@ -966,7 +983,7 @@ export default function BudgetPage() {
               >
                 <div className="budget-legend-dot" style={{ background: cat.color || '#64748b' }} />
                 <span className="budget-legend-name">{cat.emoji} {cat.name}</span>
-                <span className="budget-legend-amount">{formatCurrency(cat.spent)}</span>
+                <span className="budget-legend-amount">{formatCurrency(cat.limit_amount)}</span>
               </div>
             ))}
           </div>
@@ -2991,6 +3008,7 @@ const styles = `
   }
   .custom-tooltip-name { font-weight: 600; color: #f1f5f9; font-size: 0.875rem; }
   .custom-tooltip-value { color: #94a3b8; font-size: 0.8125rem; margin-top: 2px; }
+  .custom-tooltip-sub { color: #64748b; font-size: 0.75rem; margin-top: 2px; }
 
   /* Categories Header */
   .budget-categories-header {
