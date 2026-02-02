@@ -26,7 +26,7 @@ function emailWrapper(content: string, footerText: string = "You're receiving th
                 Budgieee
               </h1>
               <p style="margin: 4px 0 0 0; font-size: 14px; color: #64748b;">
-                Your money, smarter.
+                Budgeting and finances, minus the boring.
               </p>
             </td>
           </tr>

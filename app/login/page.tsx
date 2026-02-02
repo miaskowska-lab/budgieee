@@ -98,7 +98,7 @@ export default function LoginPage() {
       email: email.trim(),
       password,
       options: {
-        emailRedirectTo: `${window.location.origin}/`,
+        emailRedirectTo: `${window.location.origin}/auth/callback`,
       },
     })
 
@@ -154,6 +154,34 @@ export default function LoginPage() {
     setLoading(false)
   }
 
+  const handleResendConfirmation = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!email.trim()) return
+
+    setLoading(true)
+    resetForm()
+
+    if (!isSupabaseConfigured) {
+      setError('Supabase is not configured.')
+      setLoading(false)
+      return
+    }
+
+    const { error } = await supabase.auth.resend({
+      type: 'signup',
+      email: email.trim(),
+    })
+
+    if (error) {
+      setError(error.message)
+      setLoading(false)
+      return
+    }
+
+    setMessage('Confirmation email sent. Check your inbox (and spam).')
+    setLoading(false)
+  }
+
   const switchMode = (newMode: AuthMode) => {
     setMode(newMode)
     resetForm()
@@ -182,7 +210,7 @@ export default function LoginPage() {
         {/* Logo */}
         <div className="login-logo">
           <h1>Budgieee</h1>
-          <p>Your money, smarter.</p>
+          <p>Budgeting and finances, minus the boring.</p>
         </div>
 
         {/* Auth Card */}
@@ -225,6 +253,14 @@ export default function LoginPage() {
               </div>
               <button type="submit" className="login-btn primary" disabled={loading}>
                 {loading ? 'Signing in...' : 'Sign In'}
+              </button>
+              <button
+                type="button"
+                className="login-link"
+                onClick={handleResendConfirmation}
+                disabled={loading || !email.trim()}
+              >
+                Didn&apos;t receive the confirmation email? Resend
               </button>
             </form>
           )}

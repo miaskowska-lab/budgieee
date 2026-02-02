@@ -22,7 +22,7 @@ export function isUserAuthenticated(user: { id: string } | null): boolean {
  * Get the redirect path for unauthenticated users
  */
 export function getLoginRedirectPath(): string {
-  return '/login'
+  return '/'
 }
 
 /**

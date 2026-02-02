@@ -28,11 +28,12 @@ export function useNavVisibility() {
   return useContext(NavVisibilityContext)
 }
 
-export function NavVisibilityProvider({ children }: { children: ReactNode }) {
+export function NavVisibilityProvider({ children, showNav = true }: { children: ReactNode; showNav?: boolean }) {
   const [hidden, setHidden] = useState(false)
+  const hideNav = hidden || !showNav
   return (
     <NavVisibilityContext.Provider value={{ hidden, setHidden }}>
-      <div className={`app-layout ${hidden ? 'nav-hidden' : ''}`}>
+      <div className={`app-layout ${hideNav ? 'nav-hidden' : ''}`}>
         {children}
       </div>
     </NavVisibilityContext.Provider>

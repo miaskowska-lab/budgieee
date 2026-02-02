@@ -16,7 +16,7 @@ export default function AuthBox() {
     const { error } = await supabase.auth.signInWithOtp({
       email,
       options: {
-        emailRedirectTo: typeof window !== 'undefined' ? window.location.origin : 'https://budgieee.com',
+        emailRedirectTo: typeof window !== 'undefined' ? `${window.location.origin}/auth/callback` : 'https://budgieee.com/auth/callback',
       },
     })
 

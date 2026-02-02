@@ -166,7 +166,7 @@ function generateEmailHtml(title: string, body: string, ctaText: string, ctaUrl:
                 Budgieee
               </h1>
               <p style="margin: 4px 0 0 0; font-size: 14px; color: #64748b;">
-                Your money, smarter.
+                Budgeting and finances, minus the boring.
               </p>
             </td>
           </tr>
@@ -251,7 +251,7 @@ function generateDigestHtml(sections: { title: string; items: string[] }[]): str
                 Budgieee
               </h1>
               <p style="margin: 4px 0 0 0; font-size: 14px; color: #64748b;">
-                Your money, smarter.
+                Budgeting and finances, minus the boring.
               </p>
             </td>
           </tr>

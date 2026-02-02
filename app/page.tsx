@@ -197,7 +197,7 @@ export default function Home() {
       <header className="home-header">
         <div className="home-header-left">
           <h1 className="home-logo">Budgieee</h1>
-          <p className="home-tagline">Your money, smarter.</p>
+          <p className="home-tagline">Budgeting and finances, minus the boring.</p>
         </div>
         <div className="home-header-right">
           {/* Points Badge */}
