@@ -99,8 +99,9 @@ function formatMonthDisplay(monthStr: string): string {
 function getAvailableMonths(): string[] {
   const months: string[] = []
   const now = new Date()
-  // Show last 12 months + current + next month
-  for (let i = -12; i <= 1; i++) {
+  // Past 12 months + current + 5 years ahead for planning
+  const monthsAhead = 5 * 12 // 5 years
+  for (let i = -12; i <= monthsAhead; i++) {
     const d = new Date(now.getFullYear(), now.getMonth() + i, 1)
     const y = d.getFullYear()
     const m = String(d.getMonth() + 1).padStart(2, '0')
