@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'RESEND_API_KEY not configured' }, { status: 500 })
   }
   
-  const testEmail = 'miaskowska@uni.minerva.edu'
+  const testEmail = request.nextUrl.searchParams.get('email') || 'miaskowska@uni.minerva.edu'
   const emailType = request.nextUrl.searchParams.get('type') || 'invite'
   
   let emailData: { subject: string; html: string; text: string }

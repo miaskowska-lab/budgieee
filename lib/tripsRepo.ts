@@ -116,7 +116,7 @@ export async function getMyGroups(): Promise<{ data: Group[] | null; error: stri
   }
 
   // Get profiles for all members
-  const memberUserIds = [...new Set((members || []).map(m => m.user_id))]
+  const memberUserIds = Array.from(new Set((members || []).map(m => m.user_id)))
   const { data: profiles, error: profilesError } = await supabase
     .from('profiles')
     .select('user_id, email, full_name, avatar_url')
@@ -283,22 +283,27 @@ export async function inviteToGroup(groupId: string, email: string): Promise<{ e
     return { error: error.message }
   }
 
-  // Send invite email via Edge Function (uses your session JWT; RESEND_API_KEY is in Supabase secrets)
+  // Send invite email via Resend API
   try {
     const { data: group } = await supabase.from('groups').select('name').eq('id', groupId).single()
     const { data: inviterProfile } = await supabase.from('profiles').select('full_name, email').eq('user_id', user.id).single()
     const inviterName = inviterProfile?.full_name || inviterProfile?.email?.split('@')[0] || 'Someone'
     const groupName = group?.name || 'a group'
-
-    const { error: fnError } = await supabase.functions.invoke('send-invite-email', {
-      body: {
-        invited_email: email.toLowerCase(),
-        inviter_name: inviterName,
-        group_name: groupName,
-      },
-    })
-    if (fnError) {
-      console.error('send-invite-email (trips):', fnError)
+    
+    // Use the Resend-powered email function
+    const { sendGroupInviteEmail } = await import('./notifications')
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+    const inviteLink = `${appUrl}/trips?invite=${groupId}`
+    
+    const result = await sendGroupInviteEmail(
+      email.toLowerCase(),
+      inviterName,
+      groupName,
+      inviteLink
+    )
+    
+    if (!result.success) {
+      console.error('send-invite-email (trips):', result.error)
     }
   } catch (err) {
     console.error('send-invite-email (trips) exception:', err)
@@ -359,7 +364,7 @@ export async function getMyPendingInvites(): Promise<{ data: PendingInvite[] | n
   })
 
   // Get inviter profiles
-  const inviterIds = [...new Set(invites.map(i => i.invited_by))]
+  const inviterIds = Array.from(new Set(invites.map(i => i.invited_by)))
   const { data: inviterProfiles } = await supabase
     .from('profiles')
     .select('user_id, full_name, email')
@@ -514,7 +519,7 @@ export async function getGroupExpenses(groupId: string): Promise<{ data: Expense
   }
 
   // Get payer profiles
-  const payerIds = [...new Set(expenses.map(e => e.paid_by))]
+  const payerIds = Array.from(new Set(expenses.map(e => e.paid_by)))
   const { data: profiles } = await supabase
     .from('profiles')
     .select('user_id, email, full_name, avatar_url')

@@ -245,8 +245,8 @@ export default function CommunityPage() {
         
         // Sort so Personal Friends appears last (after city communities)
         mapped.sort((a, b) => {
-          if (isPersonalFriendsCode(a.code)) return 1
-          if (isPersonalFriendsCode(b.code)) return -1
+          if (isPersonalFriendsCode(a.code ?? null)) return 1
+          if (isPersonalFriendsCode(b.code ?? null)) return -1
           return 0
         })
         setCommunities(mapped)
@@ -493,7 +493,7 @@ export default function CommunityPage() {
     ))
     // Update community member count
     setCommunities(prev => prev.map(c => 
-      (isPersonalFriendsCode(c.code) || c.id === 'personal') ? { ...c, member_count: c.member_count + 1 } : c
+      (isPersonalFriendsCode(c.code ?? null) || c.id === 'personal') ? { ...c, member_count: c.member_count + 1 } : c
     ))
     showToast('Friend added to group!')
   }
@@ -504,13 +504,13 @@ export default function CommunityPage() {
     ))
     // Update community member count
     setCommunities(prev => prev.map(c => 
-      (isPersonalFriendsCode(c.code) || c.id === 'personal') ? { ...c, member_count: Math.max(0, c.member_count - 1) } : c
+      (isPersonalFriendsCode(c.code ?? null) || c.id === 'personal') ? { ...c, member_count: Math.max(0, c.member_count - 1) } : c
     ))
     showToast('Friend removed from group')
   }
 
   const handleInviteByEmail = async (email: string) => {
-    const personalFriends = communities.find(c => isPersonalFriendsCode(c.code) || c.id === 'personal')
+    const personalFriends = communities.find(c => isPersonalFriendsCode(c.code ?? null) || c.id === 'personal')
     if (isSupabaseConfigured && personalFriends) {
       const { error } = await createInvite(personalFriends.id, email)
       if (error) {
@@ -532,7 +532,7 @@ export default function CommunityPage() {
     }
     setFriends(prev => [...prev, newFriend])
     setCommunities(prev => prev.map(c => 
-      (isPersonalFriendsCode(c.code) || c.id === 'personal') ? { ...c, member_count: c.member_count + 1 } : c
+      (isPersonalFriendsCode(c.code ?? null) || c.id === 'personal') ? { ...c, member_count: c.member_count + 1 } : c
     ))
     showToast(`Invite sent to ${email}!`)
     setShowInviteModal(false)
@@ -1170,7 +1170,7 @@ export default function CommunityPage() {
             </div>
             <div className="community-feed-header-right">
               {/* Manage Friends button for Personal Friends */}
-              {(isPersonalFriendsCode(selectedCommunity.code) || selectedCommunity.id === 'personal') && (
+              {(isPersonalFriendsCode(selectedCommunity.code ?? null) || selectedCommunity.id === 'personal') && (
                 <button 
                   className="community-manage-friends-btn"
                   onClick={() => setShowFriendsModal(true)}

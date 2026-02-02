@@ -207,22 +207,27 @@ export async function createInvite(communityId: string, email: string): Promise<
     return { error: error.message }
   }
 
-  // Send invite email via Edge Function (uses your session JWT; RESEND_API_KEY is in Supabase secrets)
+  // Send invite email via Resend API
   try {
     const { data: community } = await supabase.from('communities').select('name').eq('id', communityId).single()
     const { data: inviterProfile } = await supabase.from('profiles').select('full_name, email').eq('user_id', user.id).single()
     const inviterName = inviterProfile?.full_name || inviterProfile?.email?.split('@')[0] || 'Someone'
     const communityName = community?.name || 'a community'
 
-    const { error: fnError } = await supabase.functions.invoke('send-invite-email', {
-      body: {
-        invited_email: email.trim().toLowerCase(),
-        inviter_name: inviterName,
-        group_name: communityName,
-      },
-    })
-    if (fnError) {
-      console.error('send-invite-email (community):', fnError)
+    // Use the Resend-powered email function
+    const { sendGroupInviteEmail } = await import('./notifications')
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+    const inviteLink = `${appUrl}/community?invite=${communityId}`
+    
+    const result = await sendGroupInviteEmail(
+      email.trim().toLowerCase(),
+      inviterName,
+      communityName,
+      inviteLink
+    )
+    
+    if (!result.success) {
+      console.error('send-invite-email (community):', result.error)
     }
   } catch (err) {
     console.error('send-invite-email (community) exception:', err)
