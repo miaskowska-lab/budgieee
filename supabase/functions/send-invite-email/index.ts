@@ -1,6 +1,18 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Authorization, Content-Type, apikey, x-client-info",
+  "Access-Control-Max-Age": "86400",
+};
+
 serve(async (req) => {
+  // Handle CORS preflight (browser sends OPTIONS before POST)
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: corsHeaders });
+  }
+
   try {
     const { invited_email, inviter_name, group_name } = await req.json();
 
@@ -54,13 +66,14 @@ serve(async (req) => {
     }
 
     return new Response(JSON.stringify({ success: true }), {
-      headers: { "Content-Type": "application/json" },
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (err) {
     console.error("send-invite-email error:", err);
     return new Response(
       JSON.stringify({ error: String(err) }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
 });

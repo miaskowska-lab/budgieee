@@ -283,30 +283,25 @@ export async function inviteToGroup(groupId: string, email: string): Promise<{ e
     return { error: error.message }
   }
 
-  // Send invite email via Resend (do not rollback invite on failure)
+  // Send invite email via Edge Function (uses your session JWT; RESEND_API_KEY is in Supabase secrets)
   try {
     const { data: group } = await supabase.from('groups').select('name').eq('id', groupId).single()
     const { data: inviterProfile } = await supabase.from('profiles').select('full_name, email').eq('user_id', user.id).single()
     const inviterName = inviterProfile?.full_name || inviterProfile?.email?.split('@')[0] || 'Someone'
     const groupName = group?.name || 'a group'
-    
-    // Use our Resend-powered email function
-    const { sendGroupInviteEmail } = await import('./notifications')
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
-    const inviteLink = `${baseUrl}/trips?invite=${groupId}`
-    
-    const { error: emailError } = await sendGroupInviteEmail(
-      email.toLowerCase(),
-      inviterName,
-      groupName,
-      inviteLink
-    )
-    
-    if (emailError) {
-      console.error('sendGroupInviteEmail error:', emailError)
+
+    const { error: fnError } = await supabase.functions.invoke('send-invite-email', {
+      body: {
+        invited_email: email.toLowerCase(),
+        inviter_name: inviterName,
+        group_name: groupName,
+      },
+    })
+    if (fnError) {
+      console.error('send-invite-email (trips):', fnError)
     }
   } catch (err) {
-    console.error('sendGroupInviteEmail exception:', err)
+    console.error('send-invite-email (trips) exception:', err)
   }
 
   return { error: null }

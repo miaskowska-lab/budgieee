@@ -207,30 +207,25 @@ export async function createInvite(communityId: string, email: string): Promise<
     return { error: error.message }
   }
 
-  // Send invite email via Resend (do not rollback invite on failure)
+  // Send invite email via Edge Function (uses your session JWT; RESEND_API_KEY is in Supabase secrets)
   try {
     const { data: community } = await supabase.from('communities').select('name').eq('id', communityId).single()
     const { data: inviterProfile } = await supabase.from('profiles').select('full_name, email').eq('user_id', user.id).single()
     const inviterName = inviterProfile?.full_name || inviterProfile?.email?.split('@')[0] || 'Someone'
     const communityName = community?.name || 'a community'
-    
-    // Use our Resend-powered email function
-    const { sendGroupInviteEmail } = await import('./notifications')
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
-    const inviteLink = `${baseUrl}/community?invite=${communityId}`
-    
-    const { error: emailError } = await sendGroupInviteEmail(
-      email.trim().toLowerCase(),
-      inviterName,
-      communityName,
-      inviteLink
-    )
-    
-    if (emailError) {
-      console.error('sendGroupInviteEmail (community) error:', emailError)
+
+    const { error: fnError } = await supabase.functions.invoke('send-invite-email', {
+      body: {
+        invited_email: email.trim().toLowerCase(),
+        inviter_name: inviterName,
+        group_name: communityName,
+      },
+    })
+    if (fnError) {
+      console.error('send-invite-email (community):', fnError)
     }
   } catch (err) {
-    console.error('sendGroupInviteEmail (community) exception:', err)
+    console.error('send-invite-email (community) exception:', err)
   }
 
   return { error: null }
@@ -301,7 +296,7 @@ export async function getMyPendingCommunityInvites(): Promise<{ data: PendingCom
   })
 
   // Get inviter profiles
-  const inviterIds = [...new Set(invites.map(i => i.invited_by))]
+  const inviterIds = Array.from(new Set(invites.map(i => i.invited_by)))
   const { data: inviterProfiles } = await supabase
     .from('profiles')
     .select('user_id, full_name, email')
@@ -565,7 +560,7 @@ export async function getSavedDeals(): Promise<{ data: Post[] | null; error: Err
   const { data: communities } = await supabase
     .from('communities')
     .select('id, name, emoji')
-    .in('id', [...new Set(posts.map(p => p.community_id))])
+    .in('id', Array.from(new Set(posts.map(p => p.community_id))))
   const communityMap = new Map((communities || []).map(c => [c.id, c]))
 
   const { data: likeCounts } = await supabase
@@ -593,7 +588,7 @@ export async function getSavedDeals(): Promise<{ data: Post[] | null; error: Err
     commentCountByPost.set(c.post_id, (commentCountByPost.get(c.post_id) ?? 0) + 1)
   })
 
-  const authorIds = [...new Set(posts.map(p => p.author_id))]
+  const authorIds = Array.from(new Set(posts.map(p => p.author_id)))
   const { data: profiles } = await supabase
     .from('profiles')
     .select('user_id, display_name, full_name, email, avatar_color')
@@ -682,9 +677,9 @@ export async function createPost(
     
     const { notifyCommunityPost } = await import('./notifications')
     
-    // Get community emoji from name (first emoji or default)
-    const emojiMatch = community?.name?.match(/[\u{1F300}-\u{1F9FF}]/u)
-    const emoji = emojiMatch ? emojiMatch[0] : '🏷️'
+    // Get community emoji from name (first non-ASCII character or default)
+    const firstChar = community?.name?.trim().charAt(0)
+    const emoji = firstChar && (firstChar.codePointAt(0) ?? 0) > 127 ? firstChar : '🏷️'
     
     notifyCommunityPost(
       user.id,
@@ -795,7 +790,7 @@ export async function getPostComments(postId: string): Promise<{ data: Comment[]
     return { data: [], error: null }
   }
 
-  const authorIds = [...new Set(rows.map(r => r.author_id))]
+  const authorIds = Array.from(new Set(rows.map(r => r.author_id)))
   const { data: profiles } = await supabase
     .from('profiles')
     .select('user_id, display_name, full_name, email, avatar_color')
