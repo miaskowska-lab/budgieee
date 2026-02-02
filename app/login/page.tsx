@@ -94,7 +94,7 @@ export default function LoginPage() {
       return
     }
 
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email: email.trim(),
       password,
       options: {
@@ -106,6 +106,18 @@ export default function LoginPage() {
       setError(error.message)
       setLoading(false)
       return
+    }
+
+    // Send welcome email (fire and forget - don't block on this)
+    if (data?.user?.email) {
+      fetch('/api/notifications/welcome', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: data.user.email,
+          name: data.user.email.split('@')[0],
+        }),
+      }).catch(console.error)
     }
 
     setMessage('Check your email to confirm your account, then sign in.')

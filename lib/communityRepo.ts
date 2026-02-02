@@ -207,25 +207,30 @@ export async function createInvite(communityId: string, email: string): Promise<
     return { error: error.message }
   }
 
-  // Send email via Edge Function (do not rollback invite on failure)
+  // Send invite email via Resend (do not rollback invite on failure)
   try {
     const { data: community } = await supabase.from('communities').select('name').eq('id', communityId).single()
     const { data: inviterProfile } = await supabase.from('profiles').select('full_name, email').eq('user_id', user.id).single()
-    const inviter_name = inviterProfile?.full_name || inviterProfile?.email || 'Someone'
-    const community_name = community?.name || 'a community'
-
-    const { error: fnError } = await supabase.functions.invoke('send-invite-email', {
-      body: {
-        invited_email: email.trim().toLowerCase(),
-        inviter_name,
-        group_name: community_name
-      }
-    })
-    if (fnError) {
-      console.error('send-invite-email (community):', fnError)
+    const inviterName = inviterProfile?.full_name || inviterProfile?.email?.split('@')[0] || 'Someone'
+    const communityName = community?.name || 'a community'
+    
+    // Use our Resend-powered email function
+    const { sendGroupInviteEmail } = await import('./notifications')
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+    const inviteLink = `${baseUrl}/community?invite=${communityId}`
+    
+    const { error: emailError } = await sendGroupInviteEmail(
+      email.trim().toLowerCase(),
+      inviterName,
+      communityName,
+      inviteLink
+    )
+    
+    if (emailError) {
+      console.error('sendGroupInviteEmail (community) error:', emailError)
     }
   } catch (err) {
-    console.error('send-invite-email (community) exception:', err)
+    console.error('sendGroupInviteEmail (community) exception:', err)
   }
 
   return { error: null }
@@ -659,6 +664,41 @@ export async function createPost(
 
   if (error) {
     return { data: null, error: new Error(error.message) }
+  }
+
+  // Notify community members about the new post (fire and forget)
+  try {
+    const { data: community } = await supabase
+      .from('communities')
+      .select('name')
+      .eq('id', communityId)
+      .single()
+    
+    const { data: authorProfile } = await supabase
+      .from('profiles')
+      .select('full_name, email')
+      .eq('user_id', user.id)
+      .single()
+    
+    const { notifyCommunityPost } = await import('./notifications')
+    
+    // Get community emoji from name (first emoji or default)
+    const emojiMatch = community?.name?.match(/[\u{1F300}-\u{1F9FF}]/u)
+    const emoji = emojiMatch ? emojiMatch[0] : '🏷️'
+    
+    notifyCommunityPost(
+      user.id,
+      authorProfile?.full_name || authorProfile?.email?.split('@')[0] || 'Someone',
+      communityId,
+      community?.name || 'a community',
+      emoji,
+      data.id,
+      title,
+      body.slice(0, 150) + (body.length > 150 ? '...' : ''),
+      tag
+    ).catch(console.error) // Don't block on notification
+  } catch (notifError) {
+    console.error('Failed to notify community members:', notifError)
   }
 
   return { data: { id: data.id }, error: null }

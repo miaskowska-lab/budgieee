@@ -1,16 +1,45 @@
 import { createClient } from '@supabase/supabase-js'
+import {
+  groupInviteEmail,
+  communityPostEmail,
+  tripExpenseEmail,
+  settlementEmail,
+  budgetAlertEmail,
+  dailyDigestEmail,
+  welcomeEmail,
+  type GroupInviteEmailData,
+  type CommunityPostEmailData,
+  type TripExpenseEmailData,
+  type SettlementEmailData,
+  type BudgetAlertEmailData,
+  type DailyDigestEmailData,
+  type WelcomeEmailData,
+} from './emailTemplates'
 
 // ============================================
 // NOTIFICATION SYSTEM
 // Email notifications for Budgieee
+// Respects user preferences except for:
+// - Group invites (always send)
+// - Welcome emails (always send)
 // ============================================
 
 // Types
+export type NotificationType = 
+  | 'community_post' 
+  | 'trip_added' 
+  | 'split_expense' 
+  | 'split_settle' 
+  | 'budget_alert' 
+  | 'budget_digest'
+  | 'group_invite'  // Always sends
+  | 'welcome'       // Always sends
+
 export interface NotificationEvent {
   id: string
   user_id: string
   user_email: string
-  type: 'community_post' | 'trip_added' | 'split_expense' | 'split_settle' | 'budget_alert' | 'budget_digest'
+  type: NotificationType
   title: string
   body: string
   url: string | null
@@ -19,6 +48,8 @@ export interface NotificationEvent {
   notif_community: boolean
   notif_trips: boolean
   notif_budget: boolean
+  // Extra data for rich emails
+  metadata?: Record<string, any>
 }
 
 export interface EmailPayload {
@@ -27,6 +58,9 @@ export interface EmailPayload {
   html: string
   text: string
 }
+
+// Types that ALWAYS send regardless of user preferences
+const ALWAYS_SEND_TYPES: NotificationType[] = ['group_invite', 'welcome']
 
 // Get Supabase admin client for server-side operations
 function getAdminClient() {
@@ -127,10 +161,13 @@ function generateEmailHtml(title: string, body: string, ctaText: string, ctaUrl:
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width: 480px; background: linear-gradient(180deg, #142136 0%, #1a2d4a 100%); border-radius: 16px; border: 1px solid rgba(255,255,255,0.1);">
           <!-- Logo -->
           <tr>
-            <td align="center" style="padding: 32px 24px 16px;">
-              <h1 style="margin: 0; font-size: 28px; font-weight: 700; background: linear-gradient(135deg, #60a5fa, #34d399); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">
+            <td align="center" style="padding: 32px 24px 8px;">
+              <h1 style="margin: 0; font-size: 32px; font-weight: 700; color: #5eead4; letter-spacing: -0.5px;">
                 Budgieee
               </h1>
+              <p style="margin: 4px 0 0 0; font-size: 14px; color: #64748b;">
+                Your money, smarter.
+              </p>
             </td>
           </tr>
           
@@ -209,10 +246,13 @@ function generateDigestHtml(sections: { title: string; items: string[] }[]): str
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width: 480px; background: linear-gradient(180deg, #142136 0%, #1a2d4a 100%); border-radius: 16px; border: 1px solid rgba(255,255,255,0.1);">
           <!-- Logo -->
           <tr>
-            <td align="center" style="padding: 32px 24px 16px;">
-              <h1 style="margin: 0; font-size: 28px; font-weight: 700; background: linear-gradient(135deg, #60a5fa, #34d399); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">
+            <td align="center" style="padding: 32px 24px 8px;">
+              <h1 style="margin: 0; font-size: 32px; font-weight: 700; color: #5eead4; letter-spacing: -0.5px;">
                 Budgieee
               </h1>
+              <p style="margin: 4px 0 0 0; font-size: 14px; color: #64748b;">
+                Your money, smarter.
+              </p>
             </td>
           </tr>
           
@@ -262,6 +302,11 @@ function generateDigestHtml(sections: { title: string; items: string[] }[]): str
 
 // Check if notification should be sent based on user settings
 function shouldSendNotification(event: NotificationEvent): boolean {
+  // Group invites and welcome emails ALWAYS send
+  if (ALWAYS_SEND_TYPES.includes(event.type)) {
+    return true
+  }
+  
   switch (event.type) {
     case 'community_post':
       return event.notif_community
@@ -274,6 +319,89 @@ function shouldSendNotification(event: NotificationEvent): boolean {
       return event.notif_budget
     default:
       return true
+  }
+}
+
+// Generate rich email from notification event using templates
+function generateEmailFromEvent(event: NotificationEvent): EmailPayload {
+  const metadata = event.metadata || {}
+  
+  switch (event.type) {
+    case 'group_invite':
+      const inviteData: GroupInviteEmailData = {
+        inviterName: metadata.inviterName || 'Someone',
+        groupName: metadata.groupName || 'a group',
+        inviteLink: metadata.inviteLink || (event.url ? `${BASE_URL}${event.url}` : BASE_URL),
+      }
+      const inviteEmail = groupInviteEmail(inviteData)
+      return { to: event.user_email, ...inviteEmail }
+      
+    case 'community_post':
+      const postData: CommunityPostEmailData = {
+        authorName: metadata.authorName || 'Someone',
+        communityName: metadata.communityName || 'a community',
+        communityEmoji: metadata.communityEmoji || '🏷️',
+        postTitle: metadata.postTitle || event.title,
+        postPreview: metadata.postPreview || event.body,
+        postLink: event.url ? `${BASE_URL}${event.url}` : BASE_URL,
+        tag: metadata.tag,
+      }
+      const postEmail = communityPostEmail(postData)
+      return { to: event.user_email, ...postEmail }
+      
+    case 'split_expense':
+    case 'trip_added':
+      const expenseData: TripExpenseEmailData = {
+        payerName: metadata.payerName || 'Someone',
+        groupName: metadata.groupName || 'a group',
+        description: metadata.description || event.title,
+        totalAmount: metadata.totalAmount || '$0.00',
+        yourShare: metadata.yourShare || '$0.00',
+        expenseLink: event.url ? `${BASE_URL}${event.url}` : BASE_URL,
+      }
+      const expenseEmail = tripExpenseEmail(expenseData)
+      return { to: event.user_email, ...expenseEmail }
+      
+    case 'split_settle':
+      const settleData: SettlementEmailData = {
+        settlerName: metadata.settlerName || 'Someone',
+        amount: metadata.amount || '$0.00',
+        groupName: metadata.groupName || 'a group',
+        settlementLink: event.url ? `${BASE_URL}${event.url}` : BASE_URL,
+      }
+      const settleEmail = settlementEmail(settleData)
+      return { to: event.user_email, ...settleEmail }
+      
+    case 'budget_alert':
+      const budgetData: BudgetAlertEmailData = {
+        categoryName: metadata.categoryName || 'a category',
+        categoryEmoji: metadata.categoryEmoji || '💰',
+        spent: metadata.spent || '$0',
+        budget: metadata.budget || '$0',
+        percentUsed: metadata.percentUsed || 0,
+        budgetLink: event.url ? `${BASE_URL}${event.url}` : `${BASE_URL}/budget`,
+      }
+      const budgetEmail = budgetAlertEmail(budgetData)
+      return { to: event.user_email, ...budgetEmail }
+      
+    case 'welcome':
+      const welcomeData: WelcomeEmailData = {
+        userName: metadata.userName || event.user_email.split('@')[0],
+      }
+      const welcomeEmailContent = welcomeEmail(welcomeData)
+      return { to: event.user_email, ...welcomeEmailContent }
+      
+    default:
+      // Fallback to simple email
+      const ctaUrl = event.url ? `${BASE_URL}${event.url}` : BASE_URL
+      const html = generateEmailHtml(event.title, event.body, 'View Details', ctaUrl)
+      const text = `${event.title}\n\n${event.body}\n\nView in Budgieee: ${ctaUrl}`
+      return {
+        to: event.user_email,
+        subject: `Budgieee: ${event.title}`,
+        html,
+        text,
+      }
   }
 }
 
@@ -307,24 +435,17 @@ export async function processHighPriorityNotifications(dryRun = false): Promise<
     for (const notif of notifications as NotificationEvent[]) {
       result.processed++
       
-      // Check user settings
+      // Check user settings (group_invite and welcome always send)
       if (!shouldSendNotification(notif)) {
         result.skipped++
         deliveredIds.push(notif.id) // Mark as delivered even if skipped
         continue
       }
       
-      // Generate email
-      const ctaUrl = notif.url ? `${BASE_URL}${notif.url}` : BASE_URL
-      const html = generateEmailHtml(notif.title, notif.body, 'View Details', ctaUrl)
-      const text = `${notif.title}\n\n${notif.body}\n\nView in Budgieee: ${ctaUrl}`
+      // Generate rich email using templates
+      const emailPayload = generateEmailFromEvent(notif)
       
-      const emailResult = await sendEmail({
-        to: notif.user_email,
-        subject: `Budgieee: ${notif.title}`,
-        html,
-        text,
-      }, dryRun)
+      const emailResult = await sendEmail(emailPayload, dryRun)
       
       if (emailResult.success) {
         result.sent++
@@ -470,27 +591,253 @@ export async function processDigestNotifications(dryRun = false): Promise<{
 
 export async function createNotificationEvent(
   userId: string,
-  type: NotificationEvent['type'],
+  type: NotificationType,
   title: string,
   body: string,
   url?: string,
-  priority: 'high' | 'normal' = 'normal'
+  priority: 'high' | 'normal' = 'normal',
+  metadata?: Record<string, any>
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const supabase = getAdminClient()
     
-    const { error } = await supabase.rpc('create_notification_event', {
-      p_user_id: userId,
-      p_type: type,
-      p_title: title,
-      p_body: body,
-      p_url: url || null,
-      p_priority: priority,
-    })
+    // Insert directly into notification_events table
+    const { error } = await supabase
+      .from('notification_events')
+      .insert({
+        user_id: userId,
+        type,
+        title,
+        body,
+        url: url || null,
+        priority,
+        // Store metadata as JSON in the body or a separate column if needed
+      })
     
     if (error) {
       return { success: false, error: error.message }
     }
+    
+    return { success: true }
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : 'Unknown error' }
+  }
+}
+
+// ============================================
+// CONVENIENCE FUNCTIONS FOR REAL EVENTS
+// Call these from your app when events happen
+// ============================================
+
+/**
+ * Send a group invite email (ALWAYS sends, ignores preferences)
+ */
+export async function sendGroupInviteEmail(
+  recipientEmail: string,
+  inviterName: string,
+  groupName: string,
+  inviteLink: string
+): Promise<{ success: boolean; error?: string }> {
+  const { groupInviteEmail } = await import('./emailTemplates')
+  const email = groupInviteEmail({ inviterName, groupName, inviteLink })
+  
+  return sendEmail({
+    to: recipientEmail,
+    ...email,
+  })
+}
+
+/**
+ * Send a welcome email to new user (ALWAYS sends)
+ */
+export async function sendWelcomeEmail(
+  userEmail: string,
+  userName: string
+): Promise<{ success: boolean; error?: string }> {
+  const { welcomeEmail } = await import('./emailTemplates')
+  const email = welcomeEmail({ userName })
+  
+  return sendEmail({
+    to: userEmail,
+    ...email,
+  })
+}
+
+/**
+ * Notify community members about a new post
+ * Respects user notification preferences
+ */
+export async function notifyCommunityPost(
+  authorId: string,
+  authorName: string,
+  communityId: string,
+  communityName: string,
+  communityEmoji: string,
+  postId: string,
+  postTitle: string,
+  postPreview: string,
+  tag?: string
+): Promise<{ sent: number; skipped: number; errors: string[] }> {
+  const result = { sent: 0, skipped: 0, errors: [] as string[] }
+  
+  try {
+    const supabase = getAdminClient()
+    
+    // Get all community members except the author
+    const { data: members, error: membersError } = await supabase
+      .from('community_members')
+      .select('user_id')
+      .eq('community_id', communityId)
+      .neq('user_id', authorId)
+    
+    if (membersError || !members) {
+      result.errors.push(membersError?.message || 'Failed to fetch members')
+      return result
+    }
+    
+    // Get user emails and settings
+    for (const member of members) {
+      const { data: settings } = await supabase
+        .from('user_settings')
+        .select('notif_community')
+        .eq('user_id', member.user_id)
+        .single()
+      
+      // Check if notifications are enabled (default true if no settings)
+      if (settings?.notif_community === false) {
+        result.skipped++
+        continue
+      }
+      
+      // Get user email
+      const { data: userData } = await supabase.auth.admin.getUserById(member.user_id)
+      if (!userData?.user?.email) continue
+      
+      // Create notification event for the cron to process
+      await createNotificationEvent(
+        member.user_id,
+        'community_post',
+        postTitle,
+        postPreview,
+        `/community?post=${postId}`,
+        'normal'
+      )
+      
+      result.sent++
+    }
+  } catch (err) {
+    result.errors.push(err instanceof Error ? err.message : 'Unknown error')
+  }
+  
+  return result
+}
+
+/**
+ * Notify participants about a new expense
+ * Respects user notification preferences
+ */
+export async function notifyExpenseAdded(
+  payerId: string,
+  payerName: string,
+  groupId: string,
+  groupName: string,
+  expenseId: string,
+  description: string,
+  totalAmount: number,
+  splits: { userId: string; share: number }[]
+): Promise<{ sent: number; skipped: number; errors: string[] }> {
+  const result = { sent: 0, skipped: 0, errors: [] as string[] }
+  
+  try {
+    const supabase = getAdminClient()
+    
+    // Notify each participant except the payer
+    for (const split of splits) {
+      if (split.userId === payerId) continue
+      
+      // Check user settings
+      const { data: settings } = await supabase
+        .from('user_settings')
+        .select('notif_trips')
+        .eq('user_id', split.userId)
+        .single()
+      
+      if (settings?.notif_trips === false) {
+        result.skipped++
+        continue
+      }
+      
+      // Create notification event
+      await createNotificationEvent(
+        split.userId,
+        'split_expense',
+        `${payerName} added "${description}"`,
+        `You owe $${split.share.toFixed(2)} for ${description}`,
+        `/trips?group=${groupId}`,
+        'high'
+      )
+      
+      result.sent++
+    }
+  } catch (err) {
+    result.errors.push(err instanceof Error ? err.message : 'Unknown error')
+  }
+  
+  return result
+}
+
+/**
+ * Notify user about budget threshold
+ * Respects user notification preferences
+ */
+export async function notifyBudgetAlert(
+  userId: string,
+  categoryName: string,
+  categoryEmoji: string,
+  spent: number,
+  budget: number
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const supabase = getAdminClient()
+    
+    // Check user settings
+    const { data: settings } = await supabase
+      .from('user_settings')
+      .select('notif_budget, last_budget_alert_at')
+      .eq('user_id', userId)
+      .single()
+    
+    // Check if budget notifications are enabled
+    if (settings?.notif_budget === false) {
+      return { success: true } // Silently skip
+    }
+    
+    // Check 48-hour cooldown
+    if (settings?.last_budget_alert_at) {
+      const lastAlert = new Date(settings.last_budget_alert_at)
+      const hoursSinceLastAlert = (Date.now() - lastAlert.getTime()) / (1000 * 60 * 60)
+      if (hoursSinceLastAlert < 48) {
+        return { success: true } // Skip due to cooldown
+      }
+    }
+    
+    const percentUsed = Math.round((spent / budget) * 100)
+    
+    // Create notification event
+    await createNotificationEvent(
+      userId,
+      'budget_alert',
+      `${categoryEmoji} ${categoryName}: ${percentUsed}% used`,
+      `You've spent $${spent.toFixed(0)} of your $${budget.toFixed(0)} budget`,
+      '/budget',
+      'normal'
+    )
+    
+    // Update last alert timestamp
+    await supabase
+      .from('user_settings')
+      .update({ last_budget_alert_at: new Date().toISOString() })
+      .eq('user_id', userId)
     
     return { success: true }
   } catch (err) {

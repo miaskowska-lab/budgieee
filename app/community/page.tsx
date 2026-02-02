@@ -148,6 +148,22 @@ export default function CommunityPage() {
   const router = useRouter()
   const { user: authUser, loading: authLoading, isAuthenticated } = useSession()
   
+  // Current user - use authenticated user when available, fallback to MOCK_USER for dev
+  const currentUser = useMemo(() => {
+    if (authUser) {
+      // Generate avatar color from user ID for consistency
+      const colors = ['#6366f1', '#8b5cf6', '#ec4899', '#ef4444', '#f97316', '#22c55e', '#14b8a6', '#3b82f6']
+      const colorIndex = authUser.id.charCodeAt(0) % colors.length
+      return {
+        id: authUser.id,
+        name: authUser.user_metadata?.display_name || authUser.email?.split('@')[0] || 'User',
+        email: authUser.email || '',
+        avatar_color: authUser.user_metadata?.avatar_color || colors[colorIndex],
+      }
+    }
+    return MOCK_USER
+  }, [authUser])
+  
   // Redirect to login if not authenticated (and not in dev bypass mode)
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
@@ -426,9 +442,9 @@ export default function CommunityPage() {
     if (isSupabaseConfigured) {
       return supabasePoints
     }
-    const myPosts = posts.filter(p => p.author_id === MOCK_USER.id)
+    const myPosts = posts.filter(p => p.author_id === currentUser.id)
     return myPosts.reduce((sum, p) => sum + p.like_count * POINTS_PER_LIKE, 0)
-  }, [posts, supabasePoints])
+  }, [posts, supabasePoints, currentUser.id])
 
   // ============ Event Handlers ============
   const handleSelectCommunity = useCallback((communityId: string) => {
@@ -574,7 +590,7 @@ export default function CommunityPage() {
   }, [showToast, loadPendingInvites])
 
   const handleCopyInviteLink = async () => {
-    const inviteLink = `${window.location.origin}/invite?group=personal&from=${MOCK_USER.id}`
+    const inviteLink = `${window.location.origin}/invite?group=personal&from=${currentUser.id}`
     try {
       await navigator.clipboard.writeText(inviteLink)
       showToast('Invite link copied!')
@@ -618,9 +634,9 @@ export default function CommunityPage() {
       tag_color: tag ? '#3b82f6' : null,
       image_url: imageUrl || null,
       created_at: new Date().toISOString(),
-      author_id: MOCK_USER.id,
-      author_name: MOCK_USER.name,
-      author_avatar_color: MOCK_USER.avatar_color,
+      author_id: currentUser.id,
+      author_name: currentUser.name,
+      author_avatar_color: currentUser.avatar_color,
       like_count: 0,
       comment_count: 0,
       liked_by_me: false,
@@ -777,9 +793,9 @@ export default function CommunityPage() {
       comment_id: generateId(),
       body,
       created_at: new Date().toISOString(),
-      author_id: MOCK_USER.id,
-      author_name: MOCK_USER.name,
-      author_avatar_color: MOCK_USER.avatar_color,
+      author_id: currentUser.id,
+      author_name: currentUser.name,
+      author_avatar_color: currentUser.avatar_color,
     }
     
     setComments(prev => ({
@@ -895,9 +911,9 @@ export default function CommunityPage() {
               </div>
               <div 
                 className="community-avatar" 
-                style={{ background: MOCK_USER.avatar_color }}
+                style={{ background: currentUser.avatar_color }}
               >
-                {getInitials(MOCK_USER.name)}
+                {getInitials(currentUser.name)}
               </div>
             </div>
           </header>
@@ -1064,7 +1080,7 @@ export default function CommunityPage() {
                   key={post.post_id}
                   post={post}
                   showCommunity={true}
-                  currentUserId={MOCK_USER.id}
+                  currentUserId={currentUser.id}
                   onLike={() => handleLike(post.post_id)}
                   onBookmark={() => handleBookmark(post.post_id)}
                   onComment={() => setShowCommentsModal(post.post_id)}
@@ -1195,7 +1211,7 @@ export default function CommunityPage() {
                   key={post.post_id}
                   post={post}
                   showCommunity={false}
-                  currentUserId={MOCK_USER.id}
+                  currentUserId={currentUser.id}
                   onLike={() => handleLike(post.post_id)}
                   onBookmark={() => handleBookmark(post.post_id)}
                   onComment={() => setShowCommentsModal(post.post_id)}
@@ -1257,8 +1273,8 @@ export default function CommunityPage() {
       {/* ============ NEW POST MODAL ============ */}
       {showNewPostModal && (
         <NewPostModal
-          userName={MOCK_USER.name}
-          avatarColor={MOCK_USER.avatar_color}
+          userName={currentUser.name}
+          avatarColor={currentUser.avatar_color}
           onClose={() => setShowNewPostModal(false)}
           onSubmit={handleNewPost}
         />
@@ -1270,9 +1286,9 @@ export default function CommunityPage() {
           postId={showCommentsModal}
           post={posts.find(p => p.post_id === showCommentsModal)!}
           comments={comments[showCommentsModal] || []}
-          currentUserId={MOCK_USER.id}
-          currentUserName={MOCK_USER.name}
-          currentUserAvatarColor={MOCK_USER.avatar_color}
+          currentUserId={currentUser.id}
+          currentUserName={currentUser.name}
+          currentUserAvatarColor={currentUser.avatar_color}
           onClose={() => setShowCommentsModal(null)}
           onAddComment={(body) => handleAddComment(showCommentsModal, body)}
         />
@@ -2013,6 +2029,7 @@ const styles = `
     align-items: center;
     justify-content: space-between;
     padding: 16px 20px;
+    padding-top: calc(16px + env(safe-area-inset-top, 0px));
     border-bottom: 1px solid rgba(255,255,255,0.08);
   }
   .community-header-left { display: flex; align-items: center; gap: 12px; }

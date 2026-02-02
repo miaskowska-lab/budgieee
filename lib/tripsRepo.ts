@@ -283,25 +283,30 @@ export async function inviteToGroup(groupId: string, email: string): Promise<{ e
     return { error: error.message }
   }
 
-  // Send email via Edge Function (do not rollback invite on failure)
+  // Send invite email via Resend (do not rollback invite on failure)
   try {
     const { data: group } = await supabase.from('groups').select('name').eq('id', groupId).single()
     const { data: inviterProfile } = await supabase.from('profiles').select('full_name, email').eq('user_id', user.id).single()
-    const inviter_name = inviterProfile?.full_name || inviterProfile?.email || 'Someone'
-    const group_name = group?.name || 'a group'
-
-    const { error: fnError } = await supabase.functions.invoke('send-invite-email', {
-      body: {
-        invited_email: email.toLowerCase(),
-        inviter_name,
-        group_name
-      }
-    })
-    if (fnError) {
-      console.error('send-invite-email (trips):', fnError)
+    const inviterName = inviterProfile?.full_name || inviterProfile?.email?.split('@')[0] || 'Someone'
+    const groupName = group?.name || 'a group'
+    
+    // Use our Resend-powered email function
+    const { sendGroupInviteEmail } = await import('./notifications')
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+    const inviteLink = `${baseUrl}/trips?invite=${groupId}`
+    
+    const { error: emailError } = await sendGroupInviteEmail(
+      email.toLowerCase(),
+      inviterName,
+      groupName,
+      inviteLink
+    )
+    
+    if (emailError) {
+      console.error('sendGroupInviteEmail error:', emailError)
     }
   } catch (err) {
-    console.error('send-invite-email (trips) exception:', err)
+    console.error('sendGroupInviteEmail exception:', err)
   }
 
   return { error: null }
@@ -591,6 +596,39 @@ export async function addExpense(
   const result: Expense = {
     ...expense,
     splits: splits || []
+  }
+
+  // Notify participants about the new expense (fire and forget)
+  try {
+    const { data: group } = await supabase
+      .from('groups')
+      .select('name')
+      .eq('id', groupId)
+      .single()
+    
+    const { data: payerProfile } = await supabase
+      .from('profiles')
+      .select('full_name, email')
+      .eq('user_id', paidBy)
+      .single()
+    
+    const payerName = payerProfile?.full_name || payerProfile?.email?.split('@')[0] || 'Someone'
+    const groupName = group?.name || 'a group'
+    
+    const { notifyExpenseAdded } = await import('./notifications')
+    
+    notifyExpenseAdded(
+      paidBy,
+      payerName,
+      groupId,
+      groupName,
+      expense.id,
+      description,
+      amount,
+      splitAmong
+    ).catch(console.error) // Don't block on notification
+  } catch (notifError) {
+    console.error('Failed to notify expense participants:', notifError)
   }
 
   return { data: result, error: null }

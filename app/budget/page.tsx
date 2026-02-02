@@ -2022,6 +2022,7 @@ const styles = `
     align-items: center;
     justify-content: space-between;
     padding: 16px 20px;
+    padding-top: calc(16px + env(safe-area-inset-top, 0px));
     background: rgba(255,255,255,0.04);
     border-bottom: 1px solid rgba(255,255,255,0.08);
   }

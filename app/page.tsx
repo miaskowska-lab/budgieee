@@ -599,6 +599,7 @@ const styles = `
     align-items: center;
     justify-content: space-between;
     padding: 20px 24px 16px;
+    padding-top: calc(20px + env(safe-area-inset-top, 0px));
   }
   .home-header-left { display: flex; flex-direction: column; gap: 2px; }
   .home-logo {

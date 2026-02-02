@@ -182,7 +182,47 @@ export async function addExpense(
     .select()
     .single()
   
-  return { data, error }
+  if (error) {
+    return { data: null, error }
+  }
+
+  // Check if budget threshold crossed (>80%) and send alert if needed
+  try {
+    // Get category details including budget limit
+    const { data: categoryData } = await supabase
+      .from('budget_categories')
+      .select('name, emoji, budget_limit')
+      .eq('id', categoryId)
+      .single()
+    
+    if (categoryData?.budget_limit && categoryData.budget_limit > 0) {
+      // Calculate total spent for this category
+      const { data: expenses } = await supabase
+        .from('budget_expenses')
+        .select('amount')
+        .eq('category_id', categoryId)
+        .eq('user_id', user.id)
+      
+      const totalSpent = expenses?.reduce((sum, e) => sum + (e.amount || 0), 0) || 0
+      const percentUsed = (totalSpent / categoryData.budget_limit) * 100
+      
+      // Alert if >80% used
+      if (percentUsed >= 80) {
+        const { notifyBudgetAlert } = await import('./notifications')
+        notifyBudgetAlert(
+          user.id,
+          categoryData.name,
+          categoryData.emoji || '💰',
+          totalSpent,
+          categoryData.budget_limit
+        ).catch(console.error) // Don't block on notification
+      }
+    }
+  } catch (notifError) {
+    console.error('Failed to check budget alert:', notifError)
+  }
+  
+  return { data, error: null }
 }
 
 // Delete expense - uses direct delete instead of RPC
