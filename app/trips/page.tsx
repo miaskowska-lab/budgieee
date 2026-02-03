@@ -200,14 +200,26 @@ export default function TripsPage() {
     setDataError(null)
     
     try {
+      // Collect all data first, then update state in one batch to prevent flickering
+      let localGroups: Group[] = []
+      let localFriends: Friend[] = []
+      let allExpenses: Expense[] = []
+      let allSettlements: Settlement[] = []
+      let localInvites: PendingInvite[] = []
+      let localBalances: Balance[] = []
+
       // Load groups with members
       const { data: groupsData, error: groupsError } = await getMyGroups()
       if (groupsError) {
         console.error('loadData groups:', groupsError)
         setDataError(groupsError)
-      } else if (groupsData) {
+        setDataLoading(false)
+        return
+      }
+      
+      if (groupsData) {
         // Convert API groups to local format
-        const localGroups: Group[] = groupsData.map(g => ({
+        localGroups = groupsData.map(g => ({
           id: g.id,
           name: g.name,
           emoji: g.emoji,
@@ -218,9 +230,8 @@ export default function TripsPage() {
             profile: m.profile,
           })),
         }))
-        setGroups(localGroups)
         
-        // Extract friends from group members (people you share groups with)
+        // Extract friends from group members
         const friendsMap: Record<string, Friend> = {}
         groupsData.forEach(g => {
           g.members.forEach(m => {
@@ -234,12 +245,12 @@ export default function TripsPage() {
             }
           })
         })
-        setFriends(Object.values(friendsMap))
+        localFriends = Object.values(friendsMap)
         
-        // Load expenses for all groups
-        const allExpenses: Expense[] = []
-        for (const g of groupsData) {
-          const { data: expData } = await getGroupExpenses(g.id)
+        // Load expenses for all groups in parallel for speed
+        const expensePromises = groupsData.map(g => getGroupExpenses(g.id))
+        const expenseResults = await Promise.all(expensePromises)
+        expenseResults.forEach(({ data: expData }) => {
           if (expData) {
             expData.forEach(e => {
               allExpenses.push({
@@ -261,14 +272,13 @@ export default function TripsPage() {
               })
             })
           }
-        }
-        setExpenses(allExpenses)
+        })
         
-        // Load settlements for all groups (table might not exist yet)
+        // Load settlements for all groups in parallel
         try {
-          const allSettlements: Settlement[] = []
-          for (const g of groupsData) {
-            const { data: settleData } = await getGroupSettlements(g.id)
+          const settlePromises = groupsData.map(g => getGroupSettlements(g.id))
+          const settleResults = await Promise.all(settlePromises)
+          settleResults.forEach(({ data: settleData }) => {
             if (settleData) {
               settleData.forEach(s => {
                 allSettlements.push({
@@ -284,18 +294,20 @@ export default function TripsPage() {
                 })
               })
             }
-          }
-          setSettlements(allSettlements)
+          })
         } catch (settleErr) {
           console.warn('Settlements not available:', settleErr)
-          setSettlements([])
         }
       }
       
-      // Load pending invites
-      const { data: invitesData } = await getMyPendingInvites()
-      if (invitesData) {
-        const localInvites: PendingInvite[] = invitesData.map(i => ({
+      // Load pending invites and balances in parallel
+      const [invitesResult, balancesResult] = await Promise.all([
+        getMyPendingInvites(),
+        getMyBalances().catch(() => ({ data: null }))
+      ])
+      
+      if (invitesResult.data) {
+        localInvites = invitesResult.data.map(i => ({
           id: i.id,
           invited_email: i.invited_email,
           group_id: i.group_id,
@@ -305,18 +317,19 @@ export default function TripsPage() {
           group_emoji: i.group_emoji,
           inviter_name: i.inviter_name,
         }))
-        setPendingInvites(localInvites)
       }
       
-      // Load overall balances (RPC might not include settlements if migration not applied)
-      try {
-        const { data: balancesData } = await getMyBalances()
-        if (balancesData) {
-          setSupabaseBalances(balancesData)
-        }
-      } catch (balanceErr) {
-        console.warn('Balance RPC failed:', balanceErr)
+      if (balancesResult.data) {
+        localBalances = balancesResult.data
       }
+
+      // Update all state at once - React batches these so only one re-render
+      setGroups(localGroups)
+      setFriends(localFriends)
+      setExpenses(allExpenses)
+      setSettlements(allSettlements)
+      setPendingInvites(localInvites)
+      setSupabaseBalances(localBalances)
     } catch (err) {
       console.error('loadData exception:', err)
       setDataError('Failed to load data')
@@ -941,20 +954,32 @@ export default function TripsPage() {
       <div className="trips-summary">
         <div className="trips-summary-card trips-summary-owed">
           <span className="trips-summary-label">You are owed</span>
-          <span className="trips-summary-amount trips-positive">{formatCurrency(totals.owed)}</span>
+          {dataLoading ? (
+            <span className="trips-summary-amount trips-skeleton">—</span>
+          ) : (
+            <span className="trips-summary-amount trips-positive">{formatCurrency(totals.owed)}</span>
+          )}
         </div>
         <div className="trips-summary-card trips-summary-owe">
           <span className="trips-summary-label">You owe</span>
-          <span className="trips-summary-amount trips-negative">{formatCurrency(totals.owe)}</span>
+          {dataLoading ? (
+            <span className="trips-summary-amount trips-skeleton">—</span>
+          ) : (
+            <span className="trips-summary-amount trips-negative">{formatCurrency(totals.owe)}</span>
+          )}
         </div>
       </div>
 
       {/* Net Balance */}
       <div className="trips-net-balance">
         <span>Net balance: </span>
-        <span className={totals.owed - totals.owe >= 0 ? 'trips-positive' : 'trips-negative'}>
-          {totals.owed - totals.owe >= 0 ? '+' : '-'}{formatCurrency(Math.abs(totals.owed - totals.owe))}
-        </span>
+        {dataLoading ? (
+          <span className="trips-skeleton">—</span>
+        ) : (
+          <span className={totals.owed - totals.owe >= 0 ? 'trips-positive' : 'trips-negative'}>
+            {totals.owed - totals.owe >= 0 ? '+' : '-'}{formatCurrency(Math.abs(totals.owed - totals.owe))}
+          </span>
+        )}
       </div>
 
       {/* Tabs */}
@@ -2493,6 +2518,8 @@ const styles = `
   .trips-summary-owe { border-color: rgba(248, 113, 113, 0.2); background: rgba(248, 113, 113, 0.05); }
   .trips-summary-label { font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; }
   .trips-summary-amount { font-size: 1.5rem; font-weight: 700; }
+  .trips-skeleton { color: #475569; animation: trips-pulse 1.5s ease-in-out infinite; }
+  @keyframes trips-pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 0.7; } }
   .trips-net-balance { text-align: center; padding: 0 20px 16px; font-size: 0.875rem; color: #94a3b8; }
   .trips-positive { color: #60a5fa; }
   .trips-negative { color: #f87171; }

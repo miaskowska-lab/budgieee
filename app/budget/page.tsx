@@ -920,7 +920,7 @@ export default function BudgetPage() {
               onKeyDown={(e) => e.key === 'Enter' && handleUpdateTotalBudget(totalBudget)}
               autoFocus
               min={0}
-              step={50}
+              step="0.01"
               placeholder="Enter amount..."
             />
           ) : totalBudget === 0 ? (
@@ -1508,7 +1508,7 @@ function NewCategoryModal({ onClose, onSubmit }: NewCategoryModalProps) {
             <input
               type="number"
               placeholder="0"
-              step="10"
+              step="0.01"
               min="0"
               value={limitAmount}
               onChange={e => setLimitAmount(e.target.value)}
@@ -1591,7 +1591,7 @@ function ManageBudgetModal({ categories, onClose, onUpdateBudget }: ManageBudget
                     onChange={e => setBudgets(prev => ({ ...prev, [cat.id]: e.target.value }))}
                     className="budget-input budget-manage-input"
                     min="0"
-                    step="10"
+                    step="0.01"
                   />
                 </div>
               </div>
@@ -1733,6 +1733,8 @@ function CategoryHistoryDrawer({
                   value={newBudget}
                   onChange={e => setNewBudget(e.target.value)}
                   className="budget-input"
+                  min="0"
+                  step="0.01"
                   autoFocus
                   onBlur={handleSaveBudget}
                   onKeyDown={e => e.key === 'Enter' && handleSaveBudget()}
