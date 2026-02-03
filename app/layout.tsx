@@ -4,6 +4,10 @@ import AppShell from '@/components/AppShell'
 export const metadata = {
   title: 'Budgieee',
   description: 'Budget, trips, and community',
+  icons: {
+    icon: '/logo.svg',
+    apple: '/logo.svg',
+  },
   viewport: {
     width: 'device-width',
     initialScale: 1,
