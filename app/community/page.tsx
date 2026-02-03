@@ -175,11 +175,10 @@ export default function CommunityPage() {
   const [viewMode, setViewMode] = useState<'portal' | 'feed' | 'saved' | 'join-gate'>('portal')
   const [selectedCommunityId, setSelectedCommunityId] = useState<string | null>(null)
 
-  // Only @uni.minerva.edu can join city/university communities
+  // Allow any authenticated user to join communities (temporarily relaxed)
   const canJoinMinervaCommunities = useMemo(() => {
-    const email = authUser?.email?.toLowerCase() ?? ''
-    return email.endsWith('@uni.minerva.edu')
-  }, [authUser?.email])
+    return true // Temporarily allow all users; will restore Minerva restriction later
+  }, [])
   
   // Data state: communities from Supabase when configured, else mock
   // Start with empty array when Supabase is configured to avoid flash of mock data

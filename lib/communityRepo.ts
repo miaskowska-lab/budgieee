@@ -150,13 +150,14 @@ export async function joinCommunity(communityId: string): Promise<{ error: strin
     return { error: commError?.message ?? 'Community not found' }
   }
 
-  const kind = community.kind as 'city' | 'university' | 'private'
-  if (kind === 'city' || kind === 'university') {
-    const email = (user.email ?? '').toLowerCase()
-    if (!email.endsWith('@uni.minerva.edu')) {
-      return { error: 'Only Minerva students (@uni.minerva.edu) can join this community.' }
-    }
-  }
+  // Temporarily allow any authenticated user to join (Minerva restriction relaxed)
+  // const kind = community.kind as 'city' | 'university' | 'private'
+  // if (kind === 'city' || kind === 'university') {
+  //   const email = (user.email ?? '').toLowerCase()
+  //   if (!email.endsWith('@uni.minerva.edu')) {
+  //     return { error: 'Only Minerva students (@uni.minerva.edu) can join this community.' }
+  //   }
+  // }
 
   const { error } = await supabase
     .from('community_members')
