@@ -947,7 +947,7 @@ export default function CommunityPage() {
                 {pendingCommunityInvites.map(invite => (
                   <div key={invite.id} className="community-invite-card">
                     <div className="community-invite-info">
-                      <span className="community-invite-emoji">{invite.community_emoji || '👥'}</span>
+                      <span className="community-invite-emoji">{invite.community_emoji ?? '👥'}</span>
                       <div className="community-invite-details">
                         <span className="community-invite-name">{invite.community_name || 'Community'}</span>
                         <span className="community-invite-from">from {invite.inviter_name || 'someone'}</span>
@@ -998,11 +998,11 @@ export default function CommunityPage() {
                       style={{ backgroundImage: `url(${community.image_url})` }}
                     >
                       <div className="community-group-image-overlay" />
-                      <span className="community-group-emoji-overlay">{community.emoji}</span>
+                      {community.emoji ? <span className="community-group-emoji-overlay">{community.emoji}</span> : null}
                     </div>
                   ) : (
                     <div className={`community-group-placeholder ${community.kind === 'private' ? 'personal' : ''}`}>
-                      <span className="community-group-emoji">{community.emoji}</span>
+                      {community.emoji ? <span className="community-group-emoji">{community.emoji}</span> : <span className="community-group-emoji">👥</span>}
                     </div>
                   )}
                   <div className="community-group-info">
@@ -1105,7 +1105,7 @@ export default function CommunityPage() {
               </svg>
             </button>
             <div className="community-feed-title-area">
-              <span className="community-feed-emoji">{selectedCommunity.emoji}</span>
+              {selectedCommunity.emoji ? <span className="community-feed-emoji">{selectedCommunity.emoji}</span> : null}
               <div>
                 <h1 className="community-feed-title">{selectedCommunity.name}</h1>
                 <p className="community-feed-members">
@@ -1163,7 +1163,7 @@ export default function CommunityPage() {
               </svg>
             </button>
             <div className="community-feed-title-area">
-              <span className="community-feed-emoji">{selectedCommunity.emoji}</span>
+              {selectedCommunity.emoji ? <span className="community-feed-emoji">{selectedCommunity.emoji}</span> : null}
               <div>
                 <h1 className="community-feed-title">{selectedCommunity.name}</h1>
                 <p className="community-feed-members">
@@ -1352,7 +1352,7 @@ function PostCard({ post, showCommunity, currentUserId, onLike, onBookmark, onCo
       {/* Community Badge (for saved view) */}
       {showCommunity && post.community_name && (
         <div className="community-post-source">
-          <span className="community-post-source-emoji">{post.community_emoji}</span>
+          {post.community_emoji ? <span className="community-post-source-emoji">{post.community_emoji}</span> : null}
           <span>{post.community_name}</span>
         </div>
       )}
