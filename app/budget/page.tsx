@@ -8,6 +8,7 @@ import { supabase, isSupabaseConfigured } from '@/lib/supabaseClient'
 import { useSession, isDevBypassEnabled } from '@/lib/useSession'
 import { isUserAuthenticated, getLoginRedirectPath } from '@/lib/authGuard'
 import { useNavVisibility } from '@/components/BottomNav'
+import { getCachedBudgetData, invalidateBudgetCache } from '@/lib/prefetch'
 import {
   ensureBudgetSeed,
   getBudget,
@@ -211,13 +212,29 @@ export default function BudgetPage() {
   }, [])
 
   // Load data from Supabase (only used when Supabase is configured)
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (useCache = true) => {
     if (!user && !devBypass) return
     
     // In dev mode, don't fetch from Supabase - use local state instead
     if (!isSupabaseConfigured) {
       setDataLoading(false)
       return
+    }
+    
+    // Check cache first for instant load
+    if (useCache) {
+      const cached = getCachedBudgetData(currentMonth)
+      if (cached.isValid && cached.categories) {
+        // Use cached data immediately
+        setCategories(cached.categories)
+        if (cached.expenses) {
+          setMonthExpenses(cached.expenses)
+        }
+        setDataLoading(false)
+        // Still refresh in background for fresh data
+        loadData(false)
+        return
+      }
     }
     
     setDataLoading(true)

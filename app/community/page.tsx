@@ -15,6 +15,7 @@ import {
   getCommunityFeed,
   getSavedDeals,
   createPost as createPostApi,
+  deletePost as deletePostApi,
   toggleLike as toggleLikeApi,
   toggleBookmark as toggleBookmarkApi,
   getPostComments,
@@ -125,18 +126,27 @@ function generateId(): string {
 }
 
 function formatDate(dateStr: string): string {
-  const date = new Date(dateStr)
-  const now = new Date()
-  const diffMs = now.getTime() - date.getTime()
-  const diffMins = Math.floor(diffMs / (1000 * 60))
-  const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
-
-  if (diffMins < 60) return `${diffMins}m ago`
-  if (diffHours < 24) return `${diffHours}h ago`
-  if (diffDays < 7) return `${diffDays}d ago`
+  // Parse the timestamp - ensure UTC timestamps are handled correctly
+  let date: Date
+  if (dateStr.endsWith('Z') || dateStr.includes('+') || /T.*-\d{2}:\d{2}$/.test(dateStr)) {
+    // Already has timezone info
+    date = new Date(dateStr)
+  } else {
+    // Assume UTC if no timezone specified (Supabase default)
+    date = new Date(dateStr + 'Z')
+  }
   
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  const now = new Date()
+  
+  // Compare dates in local timezone
+  const isToday = date.toLocaleDateString() === now.toLocaleDateString()
+  
+  // Display in user's local timezone
+  if (isToday) {
+    return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', hour12: true })
+  }
+  
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })
 }
 
 function getInitials(name: string): string {
@@ -196,6 +206,11 @@ export default function CommunityPage() {
   const [friends, setFriends] = useState<Friend[]>(INITIAL_FRIENDS)
   const [pendingCommunityInvites, setPendingCommunityInvites] = useState<PendingCommunityInvite[]>([])
   const [supabasePoints, setSupabasePoints] = useState<number>(0)
+  
+  // Feed cache for background pre-fetching
+  const [feedCache, setFeedCache] = useState<Record<string, { posts: Post[]; fetchedAt: number }>>({})
+  const CACHE_TTL = 30000 // 30 seconds
+  const AUTO_REFRESH_INTERVAL = 30000 // Auto-refresh every 30 seconds when viewing
   
   // UI state
   const [showNewPostModal, setShowNewPostModal] = useState(false)
@@ -258,15 +273,17 @@ export default function CommunityPage() {
   }, [])
 
   // Load community feed from Supabase (initial load, resets pagination)
-  const loadFeed = useCallback(async (communityId: string) => {
+  const loadFeed = useCallback(async (communityId: string, silent = false) => {
     if (!isSupabaseConfigured) return
-    setPostsLoading(true)
+    if (!silent) {
+      setPostsLoading(true)
+    }
     setPostsOffset(0)
     try {
       const { data, error } = await getCommunityFeed(communityId, FEED_PAGE_SIZE, 0)
       if (error) {
         console.error('loadFeed:', error)
-        showToast('Failed to load posts', 'error')
+        if (!silent) showToast('Failed to load posts', 'error')
       } else if (data) {
         // Map ApiPost to local Post type with community_id
         const mappedPosts: Post[] = data.posts.map(p => ({
@@ -276,13 +293,71 @@ export default function CommunityPage() {
         setPosts(mappedPosts)
         setPostsHasMore(data.hasMore)
         setPostsOffset(FEED_PAGE_SIZE)
+        
+        // Update cache
+        setFeedCache(prev => ({
+          ...prev,
+          [communityId]: { posts: mappedPosts, fetchedAt: Date.now() }
+        }))
       }
     } catch (err) {
       console.error('loadFeed exception:', err)
     } finally {
-      setPostsLoading(false)
+      if (!silent) {
+        setPostsLoading(false)
+      }
     }
   }, [showToast])
+  
+  // Background pre-fetch feeds for joined communities
+  const prefetchJoinedFeeds = useCallback(async () => {
+    if (!isSupabaseConfigured) return
+    const joinedCommunities = communities.filter(c => c.joined_by_me)
+    
+    for (const community of joinedCommunities) {
+      // Skip if recently cached
+      const cached = feedCache[community.id]
+      if (cached && Date.now() - cached.fetchedAt < CACHE_TTL) continue
+      
+      try {
+        const { data } = await getCommunityFeed(community.id, FEED_PAGE_SIZE, 0)
+        if (data) {
+          const mappedPosts: Post[] = data.posts.map(p => ({
+            ...p,
+            community_id: community.id,
+          }))
+          setFeedCache(prev => ({
+            ...prev,
+            [community.id]: { posts: mappedPosts, fetchedAt: Date.now() }
+          }))
+        }
+      } catch (err) {
+        // Silent fail for background fetch
+        console.error('prefetch error for', community.name, err)
+      }
+    }
+  }, [communities, feedCache])
+  
+  // Pre-fetch joined communities when communities list loads
+  useEffect(() => {
+    if (communities.length > 0 && viewMode === 'portal') {
+      // Delay slightly to not block initial render
+      const timer = setTimeout(prefetchJoinedFeeds, 1000)
+      return () => clearTimeout(timer)
+    }
+  }, [communities, viewMode, prefetchJoinedFeeds])
+  
+  // Auto-refresh when viewing a community
+  useEffect(() => {
+    if (viewMode !== 'feed' || !selectedCommunityId) return
+    
+    const interval = setInterval(() => {
+      // Silent refresh in background
+      loadFeed(selectedCommunityId, true)
+    }, AUTO_REFRESH_INTERVAL)
+    
+    return () => clearInterval(interval)
+  }, [viewMode, selectedCommunityId, loadFeed])
 
   // Load more posts (pagination)
   const loadMorePosts = useCallback(async () => {
@@ -455,12 +530,22 @@ export default function CommunityPage() {
       setViewMode('join-gate')
     } else {
       setViewMode('feed')
-      // Load feed from Supabase
+      
       if (isSupabaseConfigured) {
-        loadFeed(communityId)
+        // Use cached data immediately if available (instant load)
+        const cached = feedCache[communityId]
+        if (cached && cached.posts.length > 0) {
+          setPosts(cached.posts)
+          setPostsLoading(false)
+          // Refresh in background for latest content
+          loadFeed(communityId, true)
+        } else {
+          // No cache, show loading and fetch
+          loadFeed(communityId)
+        }
       }
     }
-  }, [communities, loadFeed])
+  }, [communities, loadFeed, feedCache])
 
   const handleBackToPortal = () => {
     setViewMode('portal')
@@ -852,6 +937,22 @@ export default function CommunityPage() {
     }
   }
 
+  const handleDeletePost = useCallback(async (postId: string) => {
+    if (!confirm('Delete this post? This cannot be undone.')) return
+    
+    if (isSupabaseConfigured) {
+      const { error } = await deletePostApi(postId)
+      if (error) {
+        showToast(error.message, 'error')
+        return
+      }
+    }
+    
+    // Remove from local state
+    setPosts(prev => prev.filter(p => p.post_id !== postId))
+    showToast('Post deleted')
+  }, [showToast])
+
   // ============ Render ============
   return (
     <div className="community-page">
@@ -1087,6 +1188,7 @@ export default function CommunityPage() {
                   onBookmark={() => handleBookmark(post.post_id)}
                   onComment={() => setShowCommentsModal(post.post_id)}
                   onShare={() => handleShare(post.post_id)}
+                  onDelete={() => handleDeletePost(post.post_id)}
                 />
               ))
             )}
@@ -1218,6 +1320,7 @@ export default function CommunityPage() {
                   onBookmark={() => handleBookmark(post.post_id)}
                   onComment={() => setShowCommentsModal(post.post_id)}
                   onShare={() => handleShare(post.post_id)}
+                  onDelete={() => handleDeletePost(post.post_id)}
                 />
               ))
             )}
@@ -1340,9 +1443,10 @@ interface PostCardProps {
   onBookmark: () => void
   onComment: () => void
   onShare: () => void
+  onDelete?: () => void
 }
 
-function PostCard({ post, showCommunity, currentUserId, onLike, onBookmark, onComment, onShare }: PostCardProps) {
+function PostCard({ post, showCommunity, currentUserId, onLike, onBookmark, onComment, onShare, onDelete }: PostCardProps) {
   const pointsEarned = post.like_count * POINTS_PER_LIKE
   const isOwnPost = post.author_id === currentUserId
   
@@ -1370,14 +1474,30 @@ function PostCard({ post, showCommunity, currentUserId, onLike, onBookmark, onCo
             <span className="community-post-date">{formatDate(post.created_at)}</span>
           </div>
         </div>
-        {post.tag && (
-          <span 
-            className="community-post-tag"
-            style={{ background: post.tag_color || '#3b82f6' }}
-          >
-            {post.tag}
-          </span>
-        )}
+        <div className="community-post-header-right">
+          {post.tag && (
+            <span 
+              className="community-post-tag"
+              style={{ background: post.tag_color || '#3b82f6' }}
+            >
+              {post.tag}
+            </span>
+          )}
+          {isOwnPost && onDelete && (
+            <button 
+              className="community-post-delete-btn"
+              onClick={(e) => { e.stopPropagation(); onDelete(); }}
+              title="Delete post"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polyline points="3 6 5 6 21 6"/>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                <line x1="10" y1="11" x2="10" y2="17"/>
+                <line x1="14" y1="11" x2="14" y2="17"/>
+              </svg>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Post Content */}
@@ -2509,6 +2629,27 @@ const styles = `
     color: white;
     text-transform: uppercase;
     letter-spacing: 0.03em;
+  }
+  .community-post-header-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .community-post-delete-btn {
+    background: none;
+    border: none;
+    color: #64748b;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .community-post-delete-btn:hover {
+    color: #ef4444;
+    background: rgba(239, 68, 68, 0.1);
   }
   .community-post-content { margin-bottom: 12px; }
   .community-post-title {

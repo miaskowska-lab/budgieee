@@ -767,6 +767,23 @@ export async function getGroupBalances(groupId: string): Promise<{ data: Balance
     profileMap[p.user_id] = { email: p.email, full_name: p.full_name }
   })
 
+  // Get settlements for this group
+  const { data: settlements } = await supabase
+    .from('settlements')
+    .select('payer_id, payee_id, amount')
+    .eq('group_id', groupId)
+
+  // Apply settlements to balances
+  ;(settlements || []).forEach(s => {
+    if (s.payer_id === user.id) {
+      // I paid them - reduces what I owe / they owe me more
+      balanceMap[s.payee_id] = (balanceMap[s.payee_id] || 0) + s.amount
+    } else if (s.payee_id === user.id) {
+      // They paid me - reduces what they owe / I owe them more
+      balanceMap[s.payer_id] = (balanceMap[s.payer_id] || 0) - s.amount
+    }
+  })
+
   const result: Balance[] = Object.entries(balanceMap)
     .filter(([_, balance]) => Math.abs(balance) > 0.01)
     .map(([userId, balance]) => ({
@@ -775,6 +792,151 @@ export async function getGroupBalances(groupId: string): Promise<{ data: Balance
       other_user_name: profileMap[userId]?.full_name || null,
       balance
     }))
+
+  return { data: result, error: null }
+}
+
+// ============ Settlements ============
+
+export interface Settlement {
+  id: string
+  group_id: string | null
+  payer_id: string
+  payee_id: string
+  amount: number
+  currency: string
+  note: string | null
+  created_at: string
+  created_by: string
+  payer_profile?: Profile
+  payee_profile?: Profile
+}
+
+/** Record a settlement payment between two users */
+export async function recordSettlement(
+  groupId: string | null,
+  payerId: string,
+  payeeId: string,
+  amount: number,
+  note?: string
+): Promise<{ data: Settlement | null; error: string | null }> {
+  if (!isSupabaseConfigured) {
+    return { data: null, error: 'Supabase not configured' }
+  }
+
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) {
+    return { data: null, error: 'Not authenticated' }
+  }
+
+  // User must be either the payer or payee
+  if (user.id !== payerId && user.id !== payeeId) {
+    return { data: null, error: 'You must be the payer or payee' }
+  }
+
+  const { data, error } = await supabase
+    .from('settlements')
+    .insert({
+      group_id: groupId,
+      payer_id: payerId,
+      payee_id: payeeId,
+      amount,
+      currency: 'USD',
+      note: note || null,
+      created_by: user.id
+    })
+    .select('*')
+    .single()
+
+  if (error) {
+    console.error('recordSettlement error:', error)
+    return { data: null, error: error.message }
+  }
+
+  // Send settlement notification (fire and forget)
+  try {
+    const { data: payerProfile } = await supabase
+      .from('profiles')
+      .select('full_name, email')
+      .eq('user_id', payerId)
+      .single()
+
+    const { data: payeeProfile } = await supabase
+      .from('profiles')
+      .select('full_name, email')
+      .eq('user_id', payeeId)
+      .single()
+
+    let groupName = 'Personal'
+    if (groupId) {
+      const { data: group } = await supabase
+        .from('groups')
+        .select('name')
+        .eq('id', groupId)
+        .single()
+      groupName = group?.name || 'a group'
+    }
+
+    // Notify the payee that they received a payment
+    const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://budgieee.com'
+    const { notifySettlement } = await import('./notifications')
+    notifySettlement(
+      payeeId,
+      payerProfile?.full_name || payerProfile?.email?.split('@')[0] || 'Someone',
+      groupName,
+      `$${amount.toFixed(2)}`,
+      `${BASE_URL}/trips`
+    ).catch(console.error)
+  } catch (notifError) {
+    console.error('Failed to send settlement notification:', notifError)
+  }
+
+  return { data: data as Settlement, error: null }
+}
+
+/** Get all settlements for a group */
+export async function getGroupSettlements(groupId: string): Promise<{ data: Settlement[] | null; error: string | null }> {
+  if (!isSupabaseConfigured) {
+    return { data: null, error: 'Supabase not configured' }
+  }
+
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) {
+    return { data: null, error: 'Not authenticated' }
+  }
+
+  const { data, error } = await supabase
+    .from('settlements')
+    .select('*')
+    .eq('group_id', groupId)
+    .order('created_at', { ascending: false })
+
+  if (error) {
+    console.error('getGroupSettlements error:', error)
+    return { data: null, error: error.message }
+  }
+
+  // Get profiles for payers and payees
+  const userIds = Array.from(new Set([
+    ...(data || []).map(s => s.payer_id),
+    ...(data || []).map(s => s.payee_id)
+  ]))
+
+  const { data: profiles } = await supabase
+    .from('profiles')
+    .select('user_id, email, full_name, avatar_url')
+    .in('user_id', userIds)
+
+  const profileMap: Record<string, Profile> = {}
+  ;(profiles || []).forEach(p => {
+    profileMap[p.user_id] = p
+  })
+
+  const result: Settlement[] = (data || []).map(s => ({
+    ...s,
+    payer_profile: profileMap[s.payer_id],
+    payee_profile: profileMap[s.payee_id]
+  }))
 
   return { data: result, error: null }
 }

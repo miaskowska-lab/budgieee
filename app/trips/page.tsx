@@ -7,6 +7,7 @@ import { useSession, isDevBypassEnabled } from '@/lib/useSession'
 import { isUserAuthenticated, getLoginRedirectPath } from '@/lib/authGuard'
 import { useNavVisibility } from '@/components/BottomNav'
 import { isSupabaseConfigured } from '@/lib/supabaseClient'
+import { getCachedTripsData, invalidateTripsCache } from '@/lib/prefetch'
 import {
   getMyGroups,
   createGroup as createGroupApi,
@@ -21,10 +22,13 @@ import {
   deleteExpense as deleteExpenseApi,
   getMyBalances,
   getGroupBalances,
+  recordSettlement as recordSettlementApi,
+  getGroupSettlements,
   type Group as ApiGroup,
   type PendingInvite as ApiPendingInvite,
   type Expense as ApiExpense,
   type Balance,
+  type Settlement,
 } from '@/lib/tripsRepo'
 
 // ============================================
@@ -97,6 +101,18 @@ interface PendingInvite {
   group_name?: string
   group_emoji?: string
   inviter_name?: string
+}
+
+interface Settlement {
+  id: string
+  group_id: string | null
+  payer_id: string
+  payee_id: string
+  amount: number
+  currency: string
+  note: string | null
+  created_at: string
+  created_by: string
 }
 
 // ============ Utility Functions ============
@@ -190,8 +206,92 @@ export default function TripsPage() {
   const [dataError, setDataError] = useState<string | null>(null)
 
   // Load data from Supabase
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (useCache = true) => {
     if (!isSupabaseConfigured || !isAuthenticated) return
+    
+    // Check cache first for instant load
+    if (useCache) {
+      const cached = getCachedTripsData()
+      if (cached.isValid && cached.groups) {
+        // Use cached data immediately for instant load
+        const localGroups: Group[] = cached.groups.map((g: any) => ({
+          id: g.id,
+          name: g.name,
+          emoji: g.emoji,
+          owner_id: g.owner_id,
+          members: (g.group_members || []).map((m: any) => ({
+            user_id: m.user_id,
+            role: m.role,
+            profile: m.profiles || { user_id: m.user_id, email: '', full_name: null, avatar_url: null },
+          })),
+        }))
+        setGroups(localGroups)
+        
+        // Extract friends from cached groups
+        const friendsMap: Record<string, Friend> = {}
+        localGroups.forEach(g => {
+          g.members.forEach(m => {
+            if (m.user_id !== currentUserId && !friendsMap[m.user_id]) {
+              friendsMap[m.user_id] = {
+                ...m.profile,
+                friendship_id: m.user_id,
+                status: 'accepted',
+                pending: false,
+              }
+            }
+          })
+        })
+        setFriends(Object.values(friendsMap))
+        
+        if (cached.expenses) {
+          const allExpenses: Expense[] = cached.expenses.map((e: any) => ({
+            id: e.id,
+            description: e.description,
+            amount: e.amount,
+            currency: e.currency,
+            paid_by: e.paid_by,
+            group_id: e.group_id,
+            created_by: e.created_by,
+            created_at: e.created_at,
+            split_mode: 'equal',
+            split_meta: null,
+            splits: (e.expense_splits || []).map((s: any) => ({
+              id: s.id,
+              user_id: s.user_id,
+              share: s.share,
+            })),
+          }))
+          setExpenses(allExpenses)
+        }
+        
+        if (cached.settlements) {
+          setSettlements(cached.settlements)
+        }
+        
+        if (cached.pendingInvites) {
+          const localInvites: PendingInvite[] = cached.pendingInvites.map((i: any) => ({
+            id: i.id,
+            invited_email: i.invited_email,
+            group_id: i.group_id,
+            status: i.status,
+            created_at: i.created_at,
+            group_name: i.groups?.name,
+            group_emoji: i.groups?.emoji,
+            inviter_name: undefined,
+          }))
+          setPendingInvites(localInvites)
+        }
+        
+        if (cached.balances) {
+          setSupabaseBalances(cached.balances)
+        }
+        
+        setDataLoading(false)
+        // Refresh in background for fresh data
+        loadData(false)
+        return
+      }
+    }
     
     setDataLoading(true)
     setDataError(null)
@@ -260,6 +360,28 @@ export default function TripsPage() {
           }
         }
         setExpenses(allExpenses)
+        
+        // Load settlements for all groups
+        const allSettlements: Settlement[] = []
+        for (const g of groupsData) {
+          const { data: settleData } = await getGroupSettlements(g.id)
+          if (settleData) {
+            settleData.forEach(s => {
+              allSettlements.push({
+                id: s.id,
+                group_id: s.group_id,
+                payer_id: s.payer_id,
+                payee_id: s.payee_id,
+                amount: s.amount,
+                currency: s.currency,
+                note: s.note,
+                created_at: s.created_at,
+                created_by: s.created_by,
+              })
+            })
+          }
+        }
+        setSettlements(allSettlements)
       }
       
       // Load pending invites
@@ -304,16 +426,19 @@ export default function TripsPage() {
   const [showAddFriendModal, setShowAddFriendModal] = useState(false)
   const [inviteToGroupId, setInviteToGroupId] = useState<string | undefined>(undefined)
   const [showCreateGroupModal, setShowCreateGroupModal] = useState(false)
+  const [showSettleModal, setShowSettleModal] = useState(false)
+  const [settleGroupId, setSettleGroupId] = useState<string | null>(null)
+  const [expandedGroup, setExpandedGroup] = useState<string | null>(null)
+  const [groupDetailTab, setGroupDetailTab] = useState<'members' | 'activity' | 'settle'>('members')
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
+  const [settlements, setSettlements] = useState<Settlement[]>([])
   
   // Hide global nav when any modal is open
   const { setHidden } = useNavVisibility()
-  const anyModalOpen = showAddModal || showAddFriendModal || showCreateGroupModal
+  const anyModalOpen = showAddModal || showAddFriendModal || showCreateGroupModal || showSettleModal
   useEffect(() => {
     setHidden(anyModalOpen)
   }, [anyModalOpen, setHidden])
-  const [expandedGroup, setExpandedGroup] = useState<string | null>(null)
-  const [groupDetailTab, setGroupDetailTab] = useState<'members' | 'activity'>('members')
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
 
   // Show toast helper
   const showToast = useCallback((message: string, type: 'success' | 'error' = 'success') => {
@@ -373,11 +498,12 @@ export default function TripsPage() {
     return { owed, owe }
   }, [balances])
 
-  // Group balances
+  // Group balances (expenses + settlements)
   const groupBalances = useMemo(() => {
     const gBalances: Record<string, number> = {}
     groups.forEach(g => { gBalances[g.id] = 0 })
 
+    // Calculate from expenses
     expenses.forEach(expense => {
       if (!expense.group_id) return
       
@@ -394,8 +520,20 @@ export default function TripsPage() {
       }
     })
 
+    // Apply settlements
+    settlements.forEach(s => {
+      if (!s.group_id) return
+      if (s.payer_id === user.user_id) {
+        // I paid someone - reduces what I owe (increases my balance)
+        gBalances[s.group_id] = (gBalances[s.group_id] || 0) + s.amount
+      } else if (s.payee_id === user.user_id) {
+        // Someone paid me - reduces what they owe (decreases my balance)
+        gBalances[s.group_id] = (gBalances[s.group_id] || 0) - s.amount
+      }
+    })
+
     return gBalances
-  }, [user, groups, expenses])
+  }, [user, groups, expenses, settlements])
 
   // Sorted friends by absolute balance
   const sortedFriends = useMemo(() => {
@@ -726,6 +864,46 @@ export default function TripsPage() {
     }).filter(g => g.members.length > 0))
     setExpandedGroup(null)
     showToast('Left group')
+  }, [user.user_id, showToast, loadData])
+
+  // Record a settlement
+  const handleRecordSettlement = useCallback(async (
+    groupId: string | null,
+    payerId: string,
+    payeeId: string,
+    amount: number,
+    note?: string
+  ) => {
+    if (isSupabaseConfigured) {
+      const { data, error } = await recordSettlementApi(groupId, payerId, payeeId, amount, note)
+      if (error) {
+        showToast(error, 'error')
+        return
+      }
+      if (data) {
+        setSettlements(prev => [data as Settlement, ...prev])
+      }
+      showToast('Settlement recorded!')
+      setShowSettleModal(false)
+      loadData() // Refresh balances
+      return
+    }
+    
+    // Local fallback
+    const newSettlement: Settlement = {
+      id: generateId(),
+      group_id: groupId,
+      payer_id: payerId,
+      payee_id: payeeId,
+      amount,
+      currency: 'USD',
+      note: note || null,
+      created_at: new Date().toISOString(),
+      created_by: user.user_id,
+    }
+    setSettlements(prev => [newSettlement, ...prev])
+    showToast('Settlement recorded!')
+    setShowSettleModal(false)
   }, [user.user_id, showToast, loadData])
 
   // ============================================
@@ -1071,8 +1249,9 @@ export default function TripsPage() {
                   </div>
                   {isExpanded && (() => {
                     const groupExpenses = expenses.filter(e => e.group_id === group.id)
+                    const groupSettlements = settlements.filter(s => s.group_id === group.id)
                     return (
-                      <div className="trips-group-detail-panel">
+                      <div className="trips-group-detail-panel expanded-full">
                         {/* Group Detail Tabs */}
                         <div className="trips-group-detail-tabs">
                           <button
@@ -1092,9 +1271,26 @@ export default function TripsPage() {
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                               <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
                             </svg>
-                            Activity ({groupExpenses.length})
+                            Activity ({groupExpenses.length + groupSettlements.length})
                           </button>
                         </div>
+                        
+                        {/* Settle Up Button */}
+                        {hasBalance && (
+                          <button 
+                            className="trips-settle-up-btn"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setSettleGroupId(group.id)
+                              setShowSettleModal(true)
+                            }}
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+                            </svg>
+                            Settle Up
+                          </button>
+                        )}
 
                         {/* Members Tab Content */}
                         {groupDetailTab === 'members' && (
@@ -1182,9 +1378,9 @@ export default function TripsPage() {
                         {/* Activity Tab Content */}
                         {groupDetailTab === 'activity' && (
                           <div className="trips-group-activity-content">
-                            {groupExpenses.length === 0 ? (
+                            {groupExpenses.length === 0 && groupSettlements.length === 0 ? (
                               <div className="trips-group-empty">
-                                <p>No expenses in this group yet</p>
+                                <p>No activity in this group yet</p>
                                 <button 
                                   className="trips-group-add-expense-btn"
                                   onClick={(e) => {
@@ -1200,42 +1396,81 @@ export default function TripsPage() {
                               </div>
                             ) : (
                               <>
-                                {groupExpenses.map(expense => {
-                                  const isPayer = expense.paid_by === user.user_id
-                                  const myShare = expense.splits.find(s => s.user_id === user.user_id)?.share || 0
-                                  const splitModeLabel = expense.split_mode === 'exact' ? 'Exact' 
-                                    : expense.split_mode === 'percent' ? 'Percent' 
-                                    : 'Equal'
-                                  
-                                  return (
-                                    <div key={expense.id} className="trips-group-expense-item">
-                                      <div className="trips-group-expense-icon" style={{ background: isPayer ? '#3b82f6' : '#374151' }}>
-                                        {isPayer ? '💰' : '📝'}
-                                      </div>
-                                      <div className="trips-group-expense-info">
-                                        <div className="trips-group-expense-header">
-                                          <span className="trips-group-expense-desc">{expense.description}</span>
-                                          <span className="trips-group-expense-amount">{formatCurrency(expense.amount)}</span>
+                                {/* Combine and sort expenses + settlements by date */}
+                                {[
+                                  ...groupExpenses.map(e => ({ type: 'expense' as const, data: e, date: new Date(e.created_at) })),
+                                  ...groupSettlements.map(s => ({ type: 'settlement' as const, data: s, date: new Date(s.created_at) }))
+                                ]
+                                  .sort((a, b) => b.date.getTime() - a.date.getTime())
+                                  .map(item => {
+                                    if (item.type === 'expense') {
+                                      const expense = item.data as Expense
+                                      const isPayer = expense.paid_by === user.user_id
+                                      const myShare = expense.splits.find(s => s.user_id === user.user_id)?.share || 0
+                                      const splitModeLabel = expense.split_mode === 'exact' ? 'Exact' 
+                                        : expense.split_mode === 'percent' ? 'Percent' 
+                                        : 'Equal'
+                                      
+                                      return (
+                                        <div key={`exp-${expense.id}`} className="trips-group-expense-item">
+                                          <div className="trips-group-expense-icon" style={{ background: isPayer ? '#3b82f6' : '#374151' }}>
+                                            {isPayer ? '💰' : '📝'}
+                                          </div>
+                                          <div className="trips-group-expense-info">
+                                            <div className="trips-group-expense-header">
+                                              <span className="trips-group-expense-desc">{expense.description}</span>
+                                              <span className="trips-group-expense-amount">{formatCurrency(expense.amount)}</span>
+                                            </div>
+                                            <div className="trips-group-expense-details">
+                                              <span className="trips-group-expense-payer">
+                                                {getName(expense.paid_by)} paid
+                                              </span>
+                                              <span className="trips-group-expense-mode">{splitModeLabel}</span>
+                                              <span className="trips-group-expense-date">{formatDate(expense.created_at)}</span>
+                                            </div>
+                                            <div className="trips-group-expense-split">
+                                              {!isPayer && myShare > 0 && (
+                                                <span className="trips-negative">You owe {formatCurrency(myShare)}</span>
+                                              )}
+                                              {isPayer && (
+                                                <span className="trips-positive">You get back {formatCurrency(expense.amount - myShare)}</span>
+                                              )}
+                                            </div>
+                                          </div>
                                         </div>
-                                        <div className="trips-group-expense-details">
-                                          <span className="trips-group-expense-payer">
-                                            {getName(expense.paid_by)} paid
-                                          </span>
-                                          <span className="trips-group-expense-mode">{splitModeLabel}</span>
-                                          <span className="trips-group-expense-date">{formatDate(expense.created_at)}</span>
+                                      )
+                                    } else {
+                                      const settlement = item.data as Settlement
+                                      const isPayer = settlement.payer_id === user.user_id
+                                      const isPayee = settlement.payee_id === user.user_id
+                                      
+                                      return (
+                                        <div key={`set-${settlement.id}`} className="trips-group-expense-item trips-settlement-item">
+                                          <div className="trips-group-expense-icon" style={{ background: '#22c55e' }}>
+                                            💸
+                                          </div>
+                                          <div className="trips-group-expense-info">
+                                            <div className="trips-group-expense-header">
+                                              <span className="trips-group-expense-desc">
+                                                {isPayer ? `You paid ${getName(settlement.payee_id)}` : 
+                                                 isPayee ? `${getName(settlement.payer_id)} paid you` :
+                                                 `${getName(settlement.payer_id)} paid ${getName(settlement.payee_id)}`}
+                                              </span>
+                                              <span className="trips-group-expense-amount trips-positive">{formatCurrency(settlement.amount)}</span>
+                                            </div>
+                                            <div className="trips-group-expense-details">
+                                              <span className="trips-settlement-badge">Settlement</span>
+                                              <span className="trips-group-expense-date">{formatDate(settlement.created_at)}</span>
+                                            </div>
+                                            {settlement.note && (
+                                              <div className="trips-settlement-note">{settlement.note}</div>
+                                            )}
+                                          </div>
                                         </div>
-                                        <div className="trips-group-expense-split">
-                                          {!isPayer && myShare > 0 && (
-                                            <span className="trips-negative">You owe {formatCurrency(myShare)}</span>
-                                          )}
-                                          {isPayer && (
-                                            <span className="trips-positive">You get back {formatCurrency(expense.amount - myShare)}</span>
-                                          )}
-                                        </div>
-                                      </div>
-                                    </div>
-                                  )
-                                })}
+                                      )
+                                    }
+                                  })
+                                }
                                 <button 
                                   className="trips-group-add-expense-btn"
                                   onClick={(e) => {
@@ -1349,6 +1584,57 @@ export default function TripsPage() {
           onSubmit={handleCreateGroup}
         />
       )}
+
+      {showSettleModal && settleGroupId && (() => {
+        const group = groups.find(g => g.id === settleGroupId)
+        if (!group) return null
+        const membersList = group.members.map(m => ({
+          user_id: m.user_id,
+          name: m.profile.full_name || m.profile.email?.split('@')[0] || 'Unknown'
+        }))
+        // Calculate balances within this group for each member
+        const memberBalances: Record<string, number> = {}
+        group.members.forEach(m => { memberBalances[m.user_id] = 0 })
+        
+        // From expenses
+        expenses.filter(e => e.group_id === settleGroupId).forEach(expense => {
+          if (expense.paid_by === user.user_id) {
+            expense.splits.forEach(s => {
+              if (s.user_id !== user.user_id) {
+                memberBalances[s.user_id] = (memberBalances[s.user_id] || 0) + s.share
+              }
+            })
+          } else {
+            const myShare = expense.splits.find(s => s.user_id === user.user_id)?.share || 0
+            if (myShare > 0) {
+              memberBalances[expense.paid_by] = (memberBalances[expense.paid_by] || 0) - myShare
+            }
+          }
+        })
+        
+        // From settlements
+        settlements.filter(s => s.group_id === settleGroupId).forEach(s => {
+          if (s.payer_id === user.user_id) {
+            memberBalances[s.payee_id] = (memberBalances[s.payee_id] || 0) + s.amount
+          } else if (s.payee_id === user.user_id) {
+            memberBalances[s.payer_id] = (memberBalances[s.payer_id] || 0) - s.amount
+          }
+        })
+        
+        return (
+          <SettleUpModal
+            currentUserId={user.user_id}
+            groupId={settleGroupId}
+            members={membersList}
+            balances={memberBalances}
+            onClose={() => {
+              setShowSettleModal(false)
+              setSettleGroupId(null)
+            }}
+            onSubmit={handleRecordSettlement}
+          />
+        )
+      })()}
     </div>
   )
 }
@@ -1949,6 +2235,165 @@ function CreateGroupModal({ onClose, onSubmit }: CreateGroupModalProps) {
   )
 }
 
+// ============ Settle Up Modal ============
+interface SettleUpModalProps {
+  currentUserId: string
+  groupId: string
+  members: { user_id: string; name: string }[]
+  balances: Record<string, number> // balance per member
+  onClose: () => void
+  onSubmit: (groupId: string, payerId: string, payeeId: string, amount: number, note?: string) => void
+}
+
+function SettleUpModal({ currentUserId, groupId, members, balances, onClose, onSubmit }: SettleUpModalProps) {
+  const [payerId, setPayerId] = useState(currentUserId)
+  const [payeeId, setPayeeId] = useState('')
+  const [amount, setAmount] = useState('')
+  const [note, setNote] = useState('')
+  const [error, setError] = useState('')
+
+  // Calculate who owes whom based on balances
+  const suggestedPayee = useMemo(() => {
+    // If I owe someone (negative balance), suggest paying them
+    const iOwe = members.filter(m => m.user_id !== currentUserId && (balances[m.user_id] || 0) > 0)
+    return iOwe.length > 0 ? iOwe[0].user_id : ''
+  }, [members, balances, currentUserId])
+
+  useEffect(() => {
+    if (!payeeId && suggestedPayee) {
+      setPayeeId(suggestedPayee)
+    }
+  }, [suggestedPayee, payeeId])
+
+  // Suggest amount based on balance
+  const suggestedAmount = useMemo(() => {
+    if (!payeeId) return ''
+    const balance = balances[payeeId] || 0
+    // If balance is positive, they owe me. If I'm paying them, might be settling what I owe.
+    // Actually let's keep it simple - suggest the absolute balance
+    return Math.abs(balance).toFixed(2)
+  }, [payeeId, balances])
+
+  useEffect(() => {
+    if (suggestedAmount && !amount) {
+      setAmount(suggestedAmount)
+    }
+  }, [suggestedAmount, amount])
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    const amountNum = parseFloat(amount)
+    if (!payeeId) {
+      setError('Select who you are paying')
+      return
+    }
+    if (payerId === payeeId) {
+      setError('Payer and payee must be different')
+      return
+    }
+    if (!amountNum || amountNum <= 0) {
+      setError('Enter a valid amount')
+      return
+    }
+    onSubmit(groupId, payerId, payeeId, amountNum, note.trim() || undefined)
+  }
+
+  const otherMembers = members.filter(m => m.user_id !== payerId)
+
+  return (
+    <div className="trips-modal-overlay" onClick={onClose}>
+      <div className="trips-modal" onClick={e => e.stopPropagation()}>
+        <div className="trips-modal-header">
+          <h2>Settle Up</h2>
+          <button className="trips-modal-close" onClick={onClose}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="trips-modal-form">
+          {error && <div className="trips-error">{error}</div>}
+
+          <div className="trips-settle-flow">
+            <div className="trips-settle-person">
+              <label>Who paid?</label>
+              <select 
+                value={payerId} 
+                onChange={e => setPayerId(e.target.value)}
+                className="trips-select"
+              >
+                {members.map(m => (
+                  <option key={m.user_id} value={m.user_id}>
+                    {m.user_id === currentUserId ? 'You' : m.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="trips-settle-arrow">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+              </svg>
+            </div>
+
+            <div className="trips-settle-person">
+              <label>Paid to?</label>
+              <select 
+                value={payeeId} 
+                onChange={e => { setPayeeId(e.target.value); setAmount('') }}
+                className="trips-select"
+              >
+                <option value="">Select person</option>
+                {otherMembers.map(m => (
+                  <option key={m.user_id} value={m.user_id}>
+                    {m.user_id === currentUserId ? 'You' : m.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="trips-field">
+            <label>Amount</label>
+            <div className="trips-amount-input">
+              <span className="trips-amount-prefix">$</span>
+              <input
+                type="number"
+                step="0.01"
+                min="0.01"
+                placeholder="0.00"
+                value={amount}
+                onChange={e => setAmount(e.target.value)}
+                className="trips-input"
+                autoFocus
+              />
+            </div>
+          </div>
+
+          <div className="trips-field">
+            <label>Note (optional)</label>
+            <input
+              type="text"
+              placeholder="e.g. Venmo payment"
+              value={note}
+              onChange={e => setNote(e.target.value)}
+              className="trips-input"
+            />
+          </div>
+
+          <button type="submit" className="trips-submit-btn trips-settle-submit">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+            </svg>
+            Record Payment
+          </button>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 // ============ Styles ============
 const styles = `
   .trips-page {
@@ -2499,6 +2944,88 @@ const styles = `
     background: rgba(239, 68, 68, 0.1);
     border-color: rgba(239, 68, 68, 0.6);
   }
+  
+  /* Expanded group takes more space */
+  .trips-group-detail-panel.expanded-full {
+    min-height: 300px;
+    max-height: 60vh;
+    overflow-y: auto;
+  }
+  
+  /* Settle Up Button */
+  .trips-settle-up-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: calc(100% - 24px);
+    margin: 12px 12px 0 12px;
+    padding: 12px 20px;
+    background: linear-gradient(135deg, #22c55e, #16a34a);
+    border: none;
+    border-radius: 10px;
+    color: white;
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    box-shadow: 0 2px 8px rgba(34, 197, 94, 0.3);
+  }
+  .trips-settle-up-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(34, 197, 94, 0.4);
+  }
+  
+  /* Settlement item styling */
+  .trips-settlement-item {
+    background: rgba(34, 197, 94, 0.08) !important;
+    border-color: rgba(34, 197, 94, 0.2) !important;
+  }
+  .trips-settlement-badge {
+    font-size: 0.6rem;
+    padding: 2px 6px;
+    background: rgba(34, 197, 94, 0.2);
+    color: #4ade80;
+    border-radius: 4px;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+  .trips-settlement-note {
+    font-size: 0.7rem;
+    color: #64748b;
+    font-style: italic;
+    margin-top: 4px;
+  }
+  
+  /* Settle Modal Styles */
+  .trips-settle-flow {
+    display: flex;
+    align-items: flex-end;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .trips-settle-person {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .trips-settle-person label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #94a3b8;
+  }
+  .trips-settle-arrow {
+    padding-bottom: 10px;
+    color: #22c55e;
+  }
+  .trips-settle-submit {
+    background: linear-gradient(135deg, #22c55e, #16a34a) !important;
+  }
+  .trips-settle-submit:hover {
+    filter: brightness(1.1);
+  }
+  
   .trips-activity-icon {
     width: 36px;
     height: 36px;

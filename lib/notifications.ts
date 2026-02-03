@@ -846,3 +846,52 @@ export async function notifyBudgetAlert(
     return { success: false, error: err instanceof Error ? err.message : 'Unknown error' }
   }
 }
+
+/**
+ * Notify user about a settlement payment received
+ * Respects user notification preferences
+ */
+export async function notifySettlement(
+  payeeId: string,
+  payerName: string,
+  groupName: string,
+  amount: string,
+  settlementLink: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const supabase = getAdminClient()
+    
+    // Check user settings
+    const { data: settings } = await supabase
+      .from('user_settings')
+      .select('notif_trips')
+      .eq('user_id', payeeId)
+      .single()
+    
+    // Check if trip notifications are enabled
+    if (settings?.notif_trips === false) {
+      return { success: true } // Silently skip
+    }
+    
+    // Create notification event
+    await createNotificationEvent(
+      payeeId,
+      'split_settle',
+      `${payerName} settled up`,
+      `${payerName} paid you ${amount} in ${groupName}`,
+      '/trips',
+      'high',
+      undefined,
+      undefined,
+      {
+        settlerName: payerName,
+        groupName,
+        amount
+      }
+    )
+    
+    return { success: true }
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : 'Unknown error' }
+  }
+}

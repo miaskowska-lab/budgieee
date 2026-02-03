@@ -73,10 +73,10 @@ export async function getVisibleCommunitiesWithCounts(): Promise<{
   // Ensure user is in Personal Friends before fetching
   await ensurePersonalFriendsMembership()
 
-  // Fetch visible communities (RLS filters by kind + membership)
+  // Fetch visible communities with member_count column (RLS filters by kind + membership)
   const { data: rows, error: communitiesError } = await supabase
     .from('communities')
-    .select('id, code, name, emoji, kind, image_url, created_at')
+    .select('id, code, name, emoji, kind, image_url, created_at, member_count')
     .order('created_at', { ascending: false })
 
   if (communitiesError) {
@@ -86,8 +86,6 @@ export async function getVisibleCommunitiesWithCounts(): Promise<{
   if (!rows || rows.length === 0) {
     return { data: [], error: null }
   }
-
-  const communityIds = rows.map(r => r.id)
 
   // Current user's memberships
   const { data: myMemberships, error: membersError } = await supabase
@@ -101,24 +99,6 @@ export async function getVisibleCommunitiesWithCounts(): Promise<{
   }
   const joinedSet = new Set((myMemberships || []).map(m => m.community_id))
 
-  // Member counts: fetch all members for these communities and count in JS
-  const { data: allMembers, error: countError } = await supabase
-    .from('community_members')
-    .select('community_id')
-    .in('community_id', communityIds)
-
-  if (countError) {
-    console.error('getVisibleCommunitiesWithCounts member counts:', countError)
-    return { data: null, error: countError.message }
-  }
-  const countByCommunity: Record<string, number> = {}
-  communityIds.forEach(id => { countByCommunity[id] = 0 })
-  ;(allMembers || []).forEach(m => {
-    if (countByCommunity[m.community_id] !== undefined) {
-      countByCommunity[m.community_id] += 1
-    }
-  })
-
   const data: VisibleCommunity[] = rows.map(r => ({
     id: r.id,
     code: r.code ?? null,
@@ -126,7 +106,7 @@ export async function getVisibleCommunitiesWithCounts(): Promise<{
     emoji: r.emoji ?? null,
     kind: r.kind as 'city' | 'university' | 'private',
     image_url: r.image_url ?? null,
-    member_count: countByCommunity[r.id] ?? 0,
+    member_count: r.member_count ?? 0,
     joined_by_me: joinedSet.has(r.id),
   }))
 
@@ -713,6 +693,31 @@ export async function createPost(
   }
 
   return { data: { id: data.id }, error: null }
+}
+
+// ============ Delete Post ============
+export async function deletePost(postId: string): Promise<{ error: Error | null }> {
+  if (!isSupabaseConfigured) {
+    return { error: new Error('Supabase not configured') }
+  }
+
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) {
+    return { error: new Error('Not authenticated') }
+  }
+
+  // RLS policy "authors can delete own posts" ensures only the author can delete
+  const { error } = await supabase
+    .from('community_posts')
+    .delete()
+    .eq('id', postId)
+    .eq('author_id', user.id) // Extra safety: only delete if user is author
+
+  if (error) {
+    return { error: new Error(error.message) }
+  }
+
+  return { error: null }
 }
 
 // ============ Likes ============
