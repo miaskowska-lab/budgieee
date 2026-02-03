@@ -59,8 +59,9 @@ USING (created_by = auth.uid());
 GRANT SELECT, INSERT, DELETE ON public.settlements TO authenticated;
 
 -- Update the balance calculation function to include settlements
+-- IMPORTANT: Must use same signature (p_user_id uuid) to replace existing function
 -- This function calculates net balance between the current user and another user
-CREATE OR REPLACE FUNCTION public.get_user_balances()
+CREATE OR REPLACE FUNCTION public.get_user_balances(p_user_id uuid)
 RETURNS TABLE (
   other_user_id uuid,
   other_user_email text,
@@ -72,7 +73,7 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-  current_user_id uuid := auth.uid();
+  current_user_id uuid := COALESCE(p_user_id, auth.uid());
 BEGIN
   IF current_user_id IS NULL THEN
     RETURN;

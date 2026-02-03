@@ -80,79 +80,11 @@ export async function prefetchBudgetData(): Promise<void> {
 }
 
 // ============ Trips Prefetch ============
+// Note: Trips prefetch is disabled for now - the queries are complex and can fail.
+// The trips page loads data directly via tripsRepo which is more reliable.
 export async function prefetchTripsData(): Promise<void> {
-  if (!isSupabaseConfigured) return
-  
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return
-
-  try {
-    // Fetch groups with members
-    const { data: groups } = await supabase
-      .from('groups')
-      .select(`
-        id, name, emoji, owner_id, created_at,
-        group_members (
-          id, user_id, role, joined_at,
-          profiles:user_id (user_id, email, full_name, avatar_url)
-        )
-      `)
-      .order('created_at', { ascending: false })
-
-    if (groups) {
-      cache.tripsGroups = { data: groups, fetchedAt: Date.now() }
-      
-      // Fetch expenses for all groups
-      const groupIds = groups.map(g => g.id)
-      if (groupIds.length > 0) {
-        const { data: expenses } = await supabase
-          .from('expenses')
-          .select(`
-            id, description, amount, currency, paid_by, group_id, created_by, created_at,
-            expense_splits (id, expense_id, user_id, share)
-          `)
-          .in('group_id', groupIds)
-          .order('created_at', { ascending: false })
-
-        if (expenses) {
-          cache.tripsExpenses = { data: expenses, fetchedAt: Date.now() }
-        }
-
-        // Fetch settlements
-        const { data: settlements } = await supabase
-          .from('settlements')
-          .select('*')
-          .in('group_id', groupIds)
-          .order('created_at', { ascending: false })
-
-        if (settlements) {
-          cache.tripsSettlements = { data: settlements, fetchedAt: Date.now() }
-        }
-      }
-    }
-
-    // Fetch pending invites
-    const { data: invites } = await supabase
-      .from('invites')
-      .select(`
-        id, invited_by, invited_email, group_id, status, created_at,
-        groups:group_id (name, emoji)
-      `)
-      .eq('invited_email', user.email?.toLowerCase())
-      .eq('status', 'pending')
-
-    if (invites) {
-      cache.tripsPendingInvites = { data: invites, fetchedAt: Date.now() }
-    }
-
-    // Fetch balances
-    const { data: balances } = await supabase.rpc('get_user_balances')
-    if (balances) {
-      cache.tripsBalances = { data: balances, fetchedAt: Date.now() }
-    }
-  } catch (err) {
-    console.error('prefetchTripsData error:', err)
-  }
+  // Disabled - let trips page load data directly for reliability
+  return
 }
 
 // ============ Prefetch All ============

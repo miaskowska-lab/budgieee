@@ -7,7 +7,6 @@ import { useSession, isDevBypassEnabled } from '@/lib/useSession'
 import { isUserAuthenticated, getLoginRedirectPath } from '@/lib/authGuard'
 import { useNavVisibility } from '@/components/BottomNav'
 import { isSupabaseConfigured } from '@/lib/supabaseClient'
-import { getCachedTripsData, invalidateTripsCache } from '@/lib/prefetch'
 import {
   getMyGroups,
   createGroup as createGroupApi,
@@ -194,92 +193,8 @@ export default function TripsPage() {
   const [dataError, setDataError] = useState<string | null>(null)
 
   // Load data from Supabase
-  const loadData = useCallback(async (useCache = true) => {
+  const loadData = useCallback(async () => {
     if (!isSupabaseConfigured || !isAuthenticated) return
-    
-    // Check cache first for instant load
-    if (useCache) {
-      const cached = getCachedTripsData()
-      if (cached.isValid && cached.groups) {
-        // Use cached data immediately for instant load
-        const localGroups: Group[] = cached.groups.map((g: any) => ({
-          id: g.id,
-          name: g.name,
-          emoji: g.emoji,
-          owner_id: g.owner_id,
-          members: (g.group_members || []).map((m: any) => ({
-            user_id: m.user_id,
-            role: m.role,
-            profile: m.profiles || { user_id: m.user_id, email: '', full_name: null, avatar_url: null },
-          })),
-        }))
-        setGroups(localGroups)
-        
-        // Extract friends from cached groups
-        const friendsMap: Record<string, Friend> = {}
-        localGroups.forEach(g => {
-          g.members.forEach(m => {
-            if (m.user_id !== currentUserId && !friendsMap[m.user_id]) {
-              friendsMap[m.user_id] = {
-                ...m.profile,
-                friendship_id: m.user_id,
-                status: 'accepted',
-                pending: false,
-              }
-            }
-          })
-        })
-        setFriends(Object.values(friendsMap))
-        
-        if (cached.expenses) {
-          const allExpenses: Expense[] = cached.expenses.map((e: any) => ({
-            id: e.id,
-            description: e.description,
-            amount: e.amount,
-            currency: e.currency,
-            paid_by: e.paid_by,
-            group_id: e.group_id,
-            created_by: e.created_by,
-            created_at: e.created_at,
-            split_mode: 'equal',
-            split_meta: null,
-            splits: (e.expense_splits || []).map((s: any) => ({
-              id: s.id,
-              user_id: s.user_id,
-              share: s.share,
-            })),
-          }))
-          setExpenses(allExpenses)
-        }
-        
-        if (cached.settlements) {
-          setSettlements(cached.settlements)
-        }
-        
-        if (cached.pendingInvites) {
-          const localInvites: PendingInvite[] = cached.pendingInvites.map((i: any) => ({
-            id: i.id,
-            invited_email: i.invited_email,
-            group_id: i.group_id,
-            status: i.status,
-            created_at: i.created_at,
-            group_name: i.groups?.name,
-            group_emoji: i.groups?.emoji,
-            inviter_name: undefined,
-          }))
-          setPendingInvites(localInvites)
-        }
-        
-        if (cached.balances) {
-          setSupabaseBalances(cached.balances)
-        }
-        
-        setDataLoading(false)
-        // Refresh in background for fresh data
-        loadData(false)
-        return
-      }
-    }
     
     setDataLoading(true)
     setDataError(null)
@@ -349,27 +264,32 @@ export default function TripsPage() {
         }
         setExpenses(allExpenses)
         
-        // Load settlements for all groups
-        const allSettlements: Settlement[] = []
-        for (const g of groupsData) {
-          const { data: settleData } = await getGroupSettlements(g.id)
-          if (settleData) {
-            settleData.forEach(s => {
-              allSettlements.push({
-                id: s.id,
-                group_id: s.group_id,
-                payer_id: s.payer_id,
-                payee_id: s.payee_id,
-                amount: s.amount,
-                currency: s.currency,
-                note: s.note,
-                created_at: s.created_at,
-                created_by: s.created_by,
+        // Load settlements for all groups (table might not exist yet)
+        try {
+          const allSettlements: Settlement[] = []
+          for (const g of groupsData) {
+            const { data: settleData } = await getGroupSettlements(g.id)
+            if (settleData) {
+              settleData.forEach(s => {
+                allSettlements.push({
+                  id: s.id,
+                  group_id: s.group_id,
+                  payer_id: s.payer_id,
+                  payee_id: s.payee_id,
+                  amount: s.amount,
+                  currency: s.currency,
+                  note: s.note,
+                  created_at: s.created_at,
+                  created_by: s.created_by,
+                })
               })
-            })
+            }
           }
+          setSettlements(allSettlements)
+        } catch (settleErr) {
+          console.warn('Settlements not available:', settleErr)
+          setSettlements([])
         }
-        setSettlements(allSettlements)
       }
       
       // Load pending invites
@@ -388,10 +308,14 @@ export default function TripsPage() {
         setPendingInvites(localInvites)
       }
       
-      // Load overall balances
-      const { data: balancesData } = await getMyBalances()
-      if (balancesData) {
-        setSupabaseBalances(balancesData)
+      // Load overall balances (RPC might not include settlements if migration not applied)
+      try {
+        const { data: balancesData } = await getMyBalances()
+        if (balancesData) {
+          setSupabaseBalances(balancesData)
+        }
+      } catch (balanceErr) {
+        console.warn('Balance RPC failed:', balanceErr)
       }
     } catch (err) {
       console.error('loadData exception:', err)
@@ -448,21 +372,14 @@ export default function TripsPage() {
     }, 800)
   }
 
-  // Calculate balances - use Supabase RPC (includes settlements) when available, else from expenses
+  // Calculate balances from expenses + settlements (client-side ensures settlements always apply)
   const balances = useMemo(() => {
-    // Supabase: get_user_balances RPC already factors in settlements
-    if (isSupabaseConfigured && supabaseBalances.length > 0) {
-      const map: Record<string, number> = {}
-      supabaseBalances.forEach(b => {
-        map[b.other_user_id] = Number(b.balance)
-      })
-      return map
-    }
-
-    // Fallback: compute from expenses only (local mode)
     const friendBalances: Record<string, number> = {}
-    friends.forEach(f => { friendBalances[f.user_id] = 0 })
+    const addUser = (uid: string) => { if (uid && uid !== user.user_id) friendBalances[uid] = friendBalances[uid] ?? 0 }
+    friends.forEach(f => addUser(f.user_id))
+    groups.forEach(g => g.members.forEach(m => addUser(m.user_id)))
 
+    // From expenses: positive = they owe me, negative = I owe them
     expenses.forEach(expense => {
       const payerId = expense.paid_by
       expense.splits.forEach(split => {
@@ -474,8 +391,18 @@ export default function TripsPage() {
         }
       })
     })
+
+    // Apply settlements: payer paid payee reduces debt
+    settlements.forEach(s => {
+      if (s.payer_id === user.user_id) {
+        friendBalances[s.payee_id] = (friendBalances[s.payee_id] || 0) + s.amount
+      } else if (s.payee_id === user.user_id) {
+        friendBalances[s.payer_id] = (friendBalances[s.payer_id] || 0) - s.amount
+      }
+    })
+
     return friendBalances
-  }, [user, friends, expenses, isSupabaseConfigured, supabaseBalances])
+  }, [user, friends, expenses, settlements])
 
   // Aggregate totals
   const totals = useMemo(() => {
