@@ -629,7 +629,8 @@ export async function createPost(
   title: string,
   body: string,
   tag?: string,
-  tagColor?: string
+  tagColor?: string,
+  imageUrl?: string
 ): Promise<{ data: { id: string } | null; error: Error | null }> {
   if (!isSupabaseConfigured) {
     return { data: null, error: new Error('Supabase not configured') }
@@ -649,6 +650,7 @@ export async function createPost(
       body,
       tag: tag || null,
       tag_color: tagColor || null,
+      image_url: imageUrl || null,
     })
     .select('id')
     .single()
@@ -693,6 +695,56 @@ export async function createPost(
   }
 
   return { data: { id: data.id }, error: null }
+}
+
+// ============ Upload Post Image ============
+export async function uploadPostImage(
+  file: File
+): Promise<{ url: string | null; error: Error | null }> {
+  if (!isSupabaseConfigured) {
+    return { url: null, error: new Error('Supabase not configured') }
+  }
+
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) {
+    return { url: null, error: new Error('Not authenticated') }
+  }
+
+  // Validate file type (allow common image types)
+  const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'image/heic', 'image/heif']
+  if (!allowedTypes.includes(file.type.toLowerCase())) {
+    return { url: null, error: new Error('Invalid image type. Supported: JPG, PNG, GIF, WebP, HEIC') }
+  }
+
+  // Validate file size (max 10MB)
+  const maxSize = 10 * 1024 * 1024
+  if (file.size > maxSize) {
+    return { url: null, error: new Error('Image must be less than 10MB') }
+  }
+
+  // Generate unique filename
+  const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg'
+  const filename = `${user.id}/${Date.now()}-${Math.random().toString(36).substring(2, 8)}.${ext}`
+
+  // Upload to Supabase Storage
+  const { data, error } = await supabase.storage
+    .from('post-images')
+    .upload(filename, file, {
+      cacheControl: '3600',
+      upsert: false,
+    })
+
+  if (error) {
+    console.error('Upload error:', error)
+    return { url: null, error: new Error(error.message) }
+  }
+
+  // Get public URL
+  const { data: urlData } = supabase.storage
+    .from('post-images')
+    .getPublicUrl(data.path)
+
+  return { url: urlData.publicUrl, error: null }
 }
 
 // ============ Delete Post ============

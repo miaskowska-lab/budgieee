@@ -15,6 +15,7 @@ import {
   getCommunityFeed,
   getSavedDeals,
   createPost as createPostApi,
+  uploadPostImage,
   deletePost as deletePostApi,
   toggleLike as toggleLikeApi,
   toggleBookmark as toggleBookmarkApi,
@@ -683,17 +684,31 @@ export default function CommunityPage() {
     }
   }
 
-  const handleNewPost = useCallback(async (title: string, body: string, tag?: string, imageUrl?: string) => {
+  const handleNewPost = useCallback(async (title: string, body: string, tag?: string, imageFile?: File) => {
     if (!selectedCommunityId) return
     
     if (isSupabaseConfigured) {
-      // Create post in Supabase
+      let uploadedImageUrl: string | undefined
+      
+      // Upload image first if provided
+      if (imageFile) {
+        showToast('Uploading image...')
+        const { url, error: uploadError } = await uploadPostImage(imageFile)
+        if (uploadError) {
+          showToast(uploadError.message, 'error')
+          return
+        }
+        uploadedImageUrl = url || undefined
+      }
+      
+      // Create post in Supabase with image URL
       const { data, error } = await createPostApi(
         selectedCommunityId,
         title,
         body,
         tag,
-        tag ? '#3b82f6' : undefined
+        tag ? '#3b82f6' : undefined,
+        uploadedImageUrl
       )
       if (error) {
         showToast(error.message, 'error')
@@ -707,7 +722,16 @@ export default function CommunityPage() {
       return
     }
     
-    // Fallback for mock mode
+    // Fallback for mock mode - convert File to data URL
+    let imageUrl: string | null = null
+    if (imageFile) {
+      imageUrl = await new Promise<string>((resolve) => {
+        const reader = new FileReader()
+        reader.onload = (e) => resolve(e.target?.result as string)
+        reader.readAsDataURL(imageFile)
+      })
+    }
+    
     const community = communities.find(c => c.id === selectedCommunityId)
     const newPost: Post = {
       post_id: generateId(),
@@ -716,7 +740,7 @@ export default function CommunityPage() {
       body,
       tag: tag || null,
       tag_color: tag ? '#3b82f6' : null,
-      image_url: imageUrl || null,
+      image_url: imageUrl,
       created_at: new Date().toISOString(),
       author_id: currentUser.id,
       author_name: currentUser.name,
@@ -1447,8 +1471,14 @@ interface PostCardProps {
 }
 
 function PostCard({ post, showCommunity, currentUserId, onLike, onBookmark, onComment, onShare, onDelete }: PostCardProps) {
+  const [expanded, setExpanded] = useState(false)
   const pointsEarned = post.like_count * POINTS_PER_LIKE
   const isOwnPost = post.author_id === currentUserId
+  
+  // Check if text is long enough to need expansion (more than ~150 chars or 3 lines)
+  const maxLength = 180
+  const isLongText = post.body.length > maxLength
+  const displayText = expanded || !isLongText ? post.body : post.body.slice(0, maxLength).trim() + '...'
   
   return (
     <article className="community-post-card">
@@ -1503,10 +1533,21 @@ function PostCard({ post, showCommunity, currentUserId, onLike, onBookmark, onCo
       {/* Post Content */}
       <div className="community-post-content">
         <h3 className="community-post-title">{post.title}</h3>
-        <p className="community-post-text">{post.body}</p>
+        <p className="community-post-text">
+          {displayText}
+          {isLongText && (
+            <button 
+              type="button"
+              className="community-post-expand-btn"
+              onClick={() => setExpanded(!expanded)}
+            >
+              {expanded ? 'Show less' : 'Read more'}
+            </button>
+          )}
+        </p>
         {post.image_url && (
           <div className="community-post-image">
-            <img src={post.image_url} alt={post.title} />
+            <img src={post.image_url} alt={post.title} loading="lazy" />
           </div>
         )}
       </div>
@@ -1569,28 +1610,32 @@ interface NewPostModalProps {
   userName: string
   avatarColor: string
   onClose: () => void
-  onSubmit: (title: string, body: string, tag?: string, imageUrl?: string) => void
+  onSubmit: (title: string, body: string, tag?: string, imageFile?: File) => void
 }
 
 function NewPostModal({ userName, avatarColor, onClose, onSubmit }: NewPostModalProps) {
   const [title, setTitle] = useState('')
   const [body, setBody] = useState('')
   const [tag, setTag] = useState('')
+  const [imageFile, setImageFile] = useState<File | null>(null)
   const [imagePreview, setImagePreview] = useState<string | null>(null)
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file) {
-      // Validate file type
-      if (!file.type.startsWith('image/')) {
-        alert('Please select an image file')
+      // Validate file type (allow common image types)
+      const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'image/heic', 'image/heif']
+      if (!allowedTypes.includes(file.type.toLowerCase())) {
+        alert('Please select a valid image (JPG, PNG, GIF, WebP, HEIC)')
         return
       }
-      // Validate file size (max 5MB)
-      if (file.size > 5 * 1024 * 1024) {
-        alert('Image must be less than 5MB')
+      // Validate file size (max 10MB)
+      if (file.size > 10 * 1024 * 1024) {
+        alert('Image must be less than 10MB')
         return
       }
+      // Store the file for upload
+      setImageFile(file)
       // Create preview URL
       const reader = new FileReader()
       reader.onload = (event) => {
@@ -1601,13 +1646,14 @@ function NewPostModal({ userName, avatarColor, onClose, onSubmit }: NewPostModal
   }
 
   const handleRemoveImage = () => {
+    setImageFile(null)
     setImagePreview(null)
   }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!title.trim() || !body.trim()) return
-    onSubmit(title.trim(), body.trim(), tag.trim() || undefined, imagePreview || undefined)
+    onSubmit(title.trim(), body.trim(), tag.trim() || undefined, imageFile || undefined)
   }
 
   const isValid = title.trim().length > 0 && body.trim().length > 0
@@ -2664,6 +2710,22 @@ const styles = `
     color: #94a3b8;
     line-height: 1.5;
     margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .community-post-expand-btn {
+    background: none;
+    border: none;
+    color: #60a5fa;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    padding: 0;
+    margin-left: 4px;
+    display: inline;
+  }
+  .community-post-expand-btn:hover {
+    text-decoration: underline;
   }
   .community-post-image {
     margin-top: 12px;
