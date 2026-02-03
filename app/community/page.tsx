@@ -533,17 +533,13 @@ export default function CommunityPage() {
       setViewMode('feed')
       
       if (isSupabaseConfigured) {
-        // Use cached data immediately if available (instant load)
+        // Use cached data immediately for instant display
         const cached = feedCache[communityId]
         if (cached && cached.posts.length > 0) {
           setPosts(cached.posts)
-          setPostsLoading(false)
-          // Refresh in background for latest content
-          loadFeed(communityId, true)
-        } else {
-          // No cache, show loading and fetch
-          loadFeed(communityId)
         }
+        // Always fetch fresh data when entering a community
+        loadFeed(communityId)
       }
     }
   }, [communities, loadFeed, feedCache])
@@ -1256,6 +1252,8 @@ export default function CommunityPage() {
                       showToast('Joined!')
                       await loadCommunities()
                       setViewMode('feed')
+                      // Load feed after joining
+                      loadFeed(selectedCommunity.id)
                     }}
                   >
                     Join
