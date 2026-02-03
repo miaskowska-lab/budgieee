@@ -1297,6 +1297,28 @@ export default function CommunityPage() {
               </div>
             </div>
             <div className="community-feed-header-right">
+              {/* Refresh button */}
+              <button 
+                className="community-refresh-btn"
+                onClick={() => loadFeed(selectedCommunity.id)}
+                title="Refresh posts"
+                disabled={postsLoading}
+              >
+                <svg 
+                  width="18" 
+                  height="18" 
+                  viewBox="0 0 24 24" 
+                  fill="none" 
+                  stroke="currentColor" 
+                  strokeWidth="2"
+                  className={postsLoading ? 'spinning' : ''}
+                >
+                  <path d="M23 4v6h-6"/>
+                  <path d="M1 20v-6h6"/>
+                  <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/>
+                  <path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"/>
+                </svg>
+              </button>
               {/* Manage Friends button for Personal Friends */}
               {(isPersonalFriendsCode(selectedCommunity.code ?? null) || selectedCommunity.id === 'personal') && (
                 <button 
@@ -1472,6 +1494,7 @@ interface PostCardProps {
 
 function PostCard({ post, showCommunity, currentUserId, onLike, onBookmark, onComment, onShare, onDelete }: PostCardProps) {
   const [expanded, setExpanded] = useState(false)
+  const [showImageLightbox, setShowImageLightbox] = useState(false)
   const pointsEarned = post.like_count * POINTS_PER_LIKE
   const isOwnPost = post.author_id === currentUserId
   
@@ -1546,11 +1569,40 @@ function PostCard({ post, showCommunity, currentUserId, onLike, onBookmark, onCo
           )}
         </p>
         {post.image_url && (
-          <div className="community-post-image">
+          <div 
+            className="community-post-image"
+            onClick={() => setShowImageLightbox(true)}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => e.key === 'Enter' && setShowImageLightbox(true)}
+          >
             <img src={post.image_url} alt={post.title} loading="lazy" />
+            <div className="community-post-image-hint">Tap to view full image</div>
           </div>
         )}
       </div>
+
+      {/* Image Lightbox Modal */}
+      {showImageLightbox && post.image_url && (
+        <div 
+          className="community-image-lightbox"
+          onClick={() => setShowImageLightbox(false)}
+        >
+          <button 
+            className="community-lightbox-close"
+            onClick={() => setShowImageLightbox(false)}
+          >
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+          <img 
+            src={post.image_url} 
+            alt={post.title}
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
 
       {/* Post Points (only show if it's your post and has likes) */}
       {isOwnPost && pointsEarned > 0 && (
@@ -2603,7 +2655,35 @@ const styles = `
   }
   .community-feed-title { font-size: 1.125rem; font-weight: 600; color: #f1f5f9; margin: 0; }
   .community-feed-members { font-size: 0.7rem; color: #64748b; margin: 0; }
-  .community-feed-header-right { display: flex; align-items: center; }
+  .community-feed-header-right { display: flex; align-items: center; gap: 8px; }
+  .community-refresh-btn {
+    background: rgba(255,255,255,0.08);
+    border: none;
+    color: #94a3b8;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+  }
+  .community-refresh-btn:hover {
+    background: rgba(255,255,255,0.12);
+    color: #f1f5f9;
+  }
+  .community-refresh-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .community-refresh-btn svg.spinning {
+    animation: spin 1s linear infinite;
+  }
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
   .community-posts { padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; }
   .community-empty {
     text-align: center;
@@ -2731,13 +2811,70 @@ const styles = `
     margin-top: 12px;
     border-radius: 12px;
     overflow: hidden;
+    cursor: pointer;
+    position: relative;
+    background: #1e293b;
   }
   .community-post-image img {
     width: 100%;
     height: auto;
-    max-height: 300px;
-    object-fit: cover;
+    max-height: 250px;
+    object-fit: contain;
     display: block;
+  }
+  .community-post-image-hint {
+    position: absolute;
+    bottom: 8px;
+    right: 8px;
+    background: rgba(0,0,0,0.6);
+    color: #fff;
+    font-size: 0.7rem;
+    padding: 4px 8px;
+    border-radius: 4px;
+    opacity: 0.8;
+  }
+  .community-post-image:hover .community-post-image-hint {
+    opacity: 1;
+  }
+  
+  /* Image Lightbox */
+  .community-image-lightbox {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0,0,0,0.95);
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  .community-image-lightbox img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    border-radius: 8px;
+  }
+  .community-lightbox-close {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    background: rgba(255,255,255,0.1);
+    border: none;
+    color: #fff;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+  }
+  .community-lightbox-close:hover {
+    background: rgba(255,255,255,0.2);
   }
   .community-post-points {
     display: inline-flex;
