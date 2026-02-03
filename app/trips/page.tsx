@@ -448,20 +448,25 @@ export default function TripsPage() {
     }, 800)
   }
 
-  // Calculate balances from expenses
+  // Calculate balances - use Supabase RPC (includes settlements) when available, else from expenses
   const balances = useMemo(() => {
+    // Supabase: get_user_balances RPC already factors in settlements
+    if (isSupabaseConfigured && supabaseBalances.length > 0) {
+      const map: Record<string, number> = {}
+      supabaseBalances.forEach(b => {
+        map[b.other_user_id] = Number(b.balance)
+      })
+      return map
+    }
+
+    // Fallback: compute from expenses only (local mode)
     const friendBalances: Record<string, number> = {}
-    
-    friends.forEach(f => {
-      friendBalances[f.user_id] = 0
-    })
+    friends.forEach(f => { friendBalances[f.user_id] = 0 })
 
     expenses.forEach(expense => {
       const payerId = expense.paid_by
-      
       expense.splits.forEach(split => {
         if (split.user_id === payerId) return
-
         if (payerId === user.user_id && split.user_id !== user.user_id) {
           friendBalances[split.user_id] = (friendBalances[split.user_id] || 0) + split.share
         } else if (payerId !== user.user_id && split.user_id === user.user_id) {
@@ -469,9 +474,8 @@ export default function TripsPage() {
         }
       })
     })
-
     return friendBalances
-  }, [user, friends, expenses])
+  }, [user, friends, expenses, isSupabaseConfigured, supabaseBalances])
 
   // Aggregate totals
   const totals = useMemo(() => {
