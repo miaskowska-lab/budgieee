@@ -103,18 +103,6 @@ interface PendingInvite {
   inviter_name?: string
 }
 
-interface Settlement {
-  id: string
-  group_id: string | null
-  payer_id: string
-  payee_id: string
-  amount: number
-  currency: string
-  note: string | null
-  created_at: string
-  created_by: string
-}
-
 // ============ Utility Functions ============
 function generateId(): string {
   return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15)
@@ -1067,7 +1055,7 @@ export default function TripsPage() {
         {dataError && !dataLoading && (
           <div className="trips-error">
             <p>{dataError}</p>
-            <button onClick={loadData} className="trips-retry-btn">Retry</button>
+            <button onClick={() => loadData()} className="trips-retry-btn">Retry</button>
           </div>
         )}
 

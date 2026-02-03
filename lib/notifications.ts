@@ -881,8 +881,6 @@ export async function notifySettlement(
       `${payerName} paid you ${amount} in ${groupName}`,
       '/trips',
       'high',
-      undefined,
-      undefined,
       {
         settlerName: payerName,
         groupName,
